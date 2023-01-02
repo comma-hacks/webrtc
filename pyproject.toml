@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "test"
+version = "0.1.0"
+description = ""
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.9"
+scons = "3.1.1"
+pycapnp = "1.0.0"
+pyyaml = "5.1.2"
+cython = "0.29.14"
+parameterized = "0.7.4"
+numpy = "1.21.1"
+aiohttp = "^3.8.3"
+aiortc = "^1.3.2"
+
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

@@ -1,0 +1,26 @@
+    1  sudo apt update
+    2  sudo apt upgrade
+   12  sudo apt install vim git 
+   14  sudo apt install python3-distutils
+   31  sudo apt update
+   33  sudo apt install tmux apt git
+   49  sudo apt install python-dev
+   50  sudo apt install python3-dev
+   91  sudo apt install iputils-tracepathj
+   92  sudo apt install iputils-tracepath
+  167  apt-get update && apt-get install -y --no-install-recommends     autoconf     build-essential     ca-certificates     capnproto     clang     cppcheck     curl     git     libbz2-dev     libcapnp-dev     libffi-dev     liblzma-dev     libncurses5-dev     libncursesw5-dev     libreadline-dev     libsqlite3-dev     libssl-dev     libtool     libzmq3-dev     llvm     make     ocl-icd-opencl-dev     opencl-headers      python-openssl     tk-dev     wget     xz-utils     zlib1g-dev
+  168  sudo apt-get update && sudo apt-get install -y --no-install-recommends     autoconf     build-essential     ca-certificates     capnproto     clang     cppcheck     curl     git     libbz2-dev     libcapnp-dev     libffi-dev     liblzma-dev     libncurses5-dev     libncursesw5-dev     libreadline-dev     libsqlite3-dev     libssl-dev     libtool     libzmq3-dev     llvm     make     ocl-icd-opencl-dev     opencl-headers      python-openssl     tk-dev     wget     xz-utils     zlib1g-dev
+  176  apt install libcapnp-dev
+  177  sudo apt install libcapnp-dev
+  178  apt install libcapnp-dev
+  180  sudo apt install capnp
+  181  sudo apt install capnproto
+  183  sudo apt install clang
+  185  sudo apt install libzmq3-dev 
+  187  sudo apt install opencl-headers
+  190  sudo apt install ocl-icd-opencl-dev
+
+# curl -sSL https://install.python-poetry.org | python3 -
+# poetry add ./cereal
+# poetry add pyyaml==5.1.2 Cython==0.29.14 scons==3.1.1 pycapnp==1.0.0 parameterized==0.7.4 numpy==1.21.1
+
