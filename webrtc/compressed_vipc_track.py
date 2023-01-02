@@ -14,7 +14,7 @@ V4L2_BUF_FLAG_KEYFRAME = 8
 class VisionIpcTrack(VideoStreamTrack):
   def __init__(self, sock_name, addr):
     super().__init__()
-    self.codec = av.CodecContext.create("hevc", "r")
+    self.codec = av.CodecContext.create("hevc_v4l2m2m", "r")
     os.environ["ZMQ"] = "1"
     messaging.context = messaging.Context()
     self.sock = messaging.sub_sock(sock_name, None, addr=addr, conflate=False)
@@ -29,31 +29,31 @@ class VisionIpcTrack(VideoStreamTrack):
     frame = None
     while frame is None:
       msgs = messaging.drain_sock(self.sock, wait_for_one=True)
-      for evt in msgs:
-        print(type(evt).__name__)
-        evta = getattr(evt, evt.which())
-        if evta.idx.encodeId != 0 and evta.idx.encodeId != (self.last_idx+1):
-          print("DROP PACKET!")
-        self.last_idx = evta.idx.encodeId
-        if not self.seen_iframe and not (evta.idx.flags & V4L2_BUF_FLAG_KEYFRAME):
-          print("waiting for iframe")
-          continue
-        self.time_q.append(time.monotonic())
+      for evt_context in msgs:
+        with evt_context as evt:
+          evta = getattr(evt, evt.which())
+          if evta.idx.encodeId != 0 and evta.idx.encodeId != (self.last_idx+1):
+            print("DROP PACKET!")
+          self.last_idx = evta.idx.encodeId
+          if not self.seen_iframe and not (evta.idx.flags & V4L2_BUF_FLAG_KEYFRAME):
+            print("waiting for iframe")
+            continue
+          self.time_q.append(time.monotonic())
 
-        # put in header (first)
-        if not self.seen_iframe:
-          self.codec.decode(av.packet.Packet(evta.header))
-          self.seen_iframe = True
+          # put in header (first)
+          if not self.seen_iframe:
+            self.codec.decode(av.packet.Packet(evta.header))
+            self.seen_iframe = True
 
-        frames = self.codec.decode(av.packet.Packet(evta.data))
-        if len(frames) == 0:
-          print("DROP SURFACE")
-          continue
-        assert len(frames) == 1
+          frames = self.codec.decode(av.packet.Packet(evta.data))
+          if len(frames) == 0:
+            print("DROP SURFACE")
+            continue
+          assert len(frames) == 1
 
-        frame = frames[0]
-        frame.pts = pts
-        frame.time_base = time_base
+          frame = frames[0]
+          frame.pts = pts
+          frame.time_base = time_base
     return frame
 
 if __name__ == "__main__":
