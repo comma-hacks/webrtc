@@ -47,7 +47,7 @@ async def offer(request):
     transceiver.setCodecPreferences(
         # [codec for codec in codecs if codec.mimeType == forced_codec]
         [RTCRtpCodecCapability(
-                        mimeType="video/H264",
+                        mimeType="video/H264", #h264_v4l2m2m 
                         clockRate=90000,
                         channels=None,
                         parameters=OrderedDict([
