@@ -1,0 +1,14 @@
+[Unit]
+Description=Body WebRTC Server
+After=network.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+User=body
+WorkingDirectory=/home/body/webrtc-body
+ExecStart=/home/body/webrtc-body/server.py --cam 0 192.168.99.200
+
+[Install]
+WantedBy=multi-user.target

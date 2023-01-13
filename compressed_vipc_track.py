@@ -14,7 +14,7 @@ V4L2_BUF_FLAG_KEYFRAME = 8
 class VisionIpcTrack(VideoStreamTrack):
   def __init__(self, sock_name, addr):
     super().__init__()
-    self.codec = av.CodecContext.create("hevc_v4l2m2m", "r")
+    self.codec = av.CodecContext.create("hevc", "r")
     os.environ["ZMQ"] = "1"
     messaging.context = messaging.Context()
     self.sock = messaging.sub_sock(sock_name, None, addr=addr, conflate=False)

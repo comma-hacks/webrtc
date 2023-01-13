@@ -35,11 +35,12 @@ sudo apt install -y wget
 sudo apt install -y xz-utils
 sudo apt install -y zlib1g-dev
 
+sudo apt install python-is-python3
 
 
 pip3 install pyyaml==5.1.2 Cython==0.29.14 scons==3.1.1 numpy==1.21.1 pycapnp==1.1.1
 
-`python3 -m site --user-base`
+python3 -m site --user-base
 
 export PATH="$HOME/.local/bin:$PATH"
 
