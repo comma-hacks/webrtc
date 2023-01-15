@@ -9,9 +9,9 @@ class DesktopStreamTrack(VideoStreamTrack):
     def __init__(self):
         super().__init__()
         options =  {
-            'i':':0.0',
+            'i':':0.0+0,0',
             'framerate':'20',
-            'follow_mouse':'centered'
+            'video_size': '1920x1080'
         }
         self.container = av.open(':0', format='x11grab', options=options)
 
