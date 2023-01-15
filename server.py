@@ -83,7 +83,7 @@ async def on_shutdown(app):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Decode video streams and broadcast via WebRTC")
-    parser.add_argument("addr", help="Address of comma three")
+    parser.add_argument("--addr", default='tici', help="Address of comma three")
 
     # Not implemented (yet?). Geo already made the PoC for this, it should be possible.
     # parser.add_argument("--nvidia", action="store_true", help="Use nvidia instead of ffmpeg")
