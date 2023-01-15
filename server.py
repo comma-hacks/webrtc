@@ -43,20 +43,6 @@ async def offer(request):
     video = VisionIpcTrack(cams[int(args.cam)], args.addr)
 
     video_sender = pc.addTrack(video)
-    transceiver = next(t for t in pc.getTransceivers() if t.sender == video_sender)
-    transceiver.setCodecPreferences(
-        # [codec for codec in codecs if codec.mimeType == forced_codec]
-        [RTCRtpCodecCapability(
-                        mimeType="video/H264", #h264_v4l2m2m 
-                        clockRate=90000,
-                        channels=None,
-                        parameters=OrderedDict([
-                        ("packetization-mode", "1"),
-                        ("level-asymmetry-allowed", "1"),
-                        ("profile-level-id", "42001f"),
-                        ])
-                    )]
-    )
 
     await pc.setRemoteDescription(offer)
 
