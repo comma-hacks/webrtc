@@ -3,12 +3,17 @@ import av
 import asyncio
 from aiortc import VideoStreamTrack
 import numpy
+
 # https://ffmpeg.org/ffmpeg-devices.html#x11grab
 class DesktopStreamTrack(VideoStreamTrack):
     def __init__(self):
         super().__init__()
-        self.container = av.open(':0.0+0,0', format='x11grab')
-        # self.stream = self.container.streams.video[0]
+        options =  {
+            'i':':0.0',
+            'framerate':'20',
+            'follow_mouse':'centered'
+        }
+        self.container = av.open(':0', format='x11grab', options=options)
 
     async def recv(self):
         pts, time_base = await self.next_timestamp()
