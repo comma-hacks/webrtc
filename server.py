@@ -9,6 +9,7 @@ from typing import OrderedDict
 from aiohttp import web
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCRtpCodecCapability
 from compressed_vipc_track import VisionIpcTrack
+from desktop_stream_track import DesktopStreamTrack
 
 ROOT = os.path.dirname(__file__)
 
@@ -40,7 +41,8 @@ async def offer(request):
     # TODO: stream the microphone
     audio = None
 
-    video = VisionIpcTrack(cams[int(args.cam)], args.addr)
+    # video = VisionIpcTrack(cams[int(args.cam)], args.addr)
+    video = DesktopStreamTrack()
 
     video_sender = pc.addTrack(video)
 
