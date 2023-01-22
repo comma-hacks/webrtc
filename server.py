@@ -11,8 +11,7 @@ from compressed_vipc_track import VisionIpcTrack
 from desktop_stream_track import DesktopStreamTrack
 from aiortc.contrib.signaling import BYE
 from secureput.secureput_signaling import SecureputSignaling
-import pyautogui
-import numpy
+
 from aiortc.contrib.media import MediaBlackhole
 
 # optional, for better performance
@@ -40,7 +39,6 @@ async def heap_snapshot():
             print(stat)
         await asyncio.sleep(10)
 
-pyautogui.FAILSAFE = False
 
 cams = ["roadEncodeData","wideRoadEncodeData","driverEncodeData"]
 cam = 2
@@ -90,13 +88,8 @@ async def signal(pc, signaling):
                 @channel.on('message')
                 async def on_message(message):
                     data = json.loads(message)
-                    if data["action"] == "mousemove" and desktop_track != None:
-                        pyautogui.moveTo(data["x"], data["y"], _pause=False)
-                    if data["action"] == "joystick" and desktop_track != None:
-                        x = numpy.interp(data["x"], (-40, 40), (0, desktop_track.resolution.width))
-                        y = numpy.interp(data["y"], (-40, 40), (desktop_track.resolution.height, 0))
-                        print(f'{data["y"]} {desktop_track.resolution.height} {y}')
-                        pyautogui.moveTo(x, y, _pause=False)
+                    if desktop_track:
+                        desktop_track.handle_message(data)
 
             @pc.on("track")
             def on_track(track):
@@ -142,9 +135,9 @@ if __name__ == "__main__":
     pc = RTCPeerConnection(configuration=RTCConfiguration([RTCIceServer(args.stun_server)]))
     signaling = SecureputSignaling(args.signaling_server)
     
-    # coro = signal(pc, signaling)
+    coro = signal(pc, signaling)
     # coro = asyncio.gather(watchdog.check_memory(), signal(pc, signaling))
-    coro = asyncio.gather(heap_snapshot(), signal(pc, signaling))
+    # coro = asyncio.gather(heap_snapshot(), signal(pc, signaling))
 
 
     # run event loop

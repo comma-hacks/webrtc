@@ -5,6 +5,12 @@ from aiortc import VideoStreamTrack
 import Xlib
 import Xlib.display
 import os
+import pyautogui
+import numpy
+import evdev
+import keymap
+
+pyautogui.FAILSAFE = False
 
 # https://ffmpeg.org/ffmpeg-devices.html#x11grab
 class DesktopStreamTrack(VideoStreamTrack):
@@ -18,6 +24,7 @@ class DesktopStreamTrack(VideoStreamTrack):
             'video_size': str(self.resolution.width) + "x" + str(self.resolution.height)
         }
         self.container = av.open(':0', format='x11grab', options=options)
+        self.ui = evdev.UInput()
 
     async def recv(self):
         pts, time_base = await self.next_timestamp()
@@ -28,6 +35,33 @@ class DesktopStreamTrack(VideoStreamTrack):
         frame.pts = pts
         frame.time_base = time_base
         return frame
+
+    def handle_message(self, data):
+        if data["action"] == "mousemove":
+            x = numpy.interp(data["cursorPositionX"], (0, data["displayWidth"]), (0, self.resolution.width))
+            y = numpy.interp(data["cursorPositionY"], (0, data["displayHeight"]), (0, self.resolution.height))
+            pyautogui.moveTo(x, y, _pause=False)
+        elif data["action"] == "joystick":
+            x = numpy.interp(data["x"], (-38, 38), (0, self.resolution.width))
+            y = numpy.interp(data["y"], (-38, 38), (self.resolution.height, 0))
+            print(f'{data["y"]} {self.resolution.height} {y}')
+            pyautogui.moveTo(x, y, _pause=False)
+        elif data["action"] == "click":
+            pyautogui.click()
+        elif data["action"] == "rightclick":
+            pyautogui.rightClick()
+        elif data["action"] == "keyboard":
+            try:
+                keymap.reload()
+                osKey = keymap.iOStoLinux[data["key"]]
+                self.ui.write(evdev.ecodes.EV_KEY, osKey, data["direction"])
+                self.ui.syn()
+            except KeyError:
+                print(f"Unknown key: {data['key']}")
+            
+    def stop(self) -> None:
+        super().stop()
+        self.ui.close()
 
 if __name__ == "__main__":
     from time import time_ns

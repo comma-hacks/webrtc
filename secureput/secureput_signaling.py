@@ -62,7 +62,6 @@ class SecureputSignaling(WebsocketSignaling):
 
     async def send(self, descr):
         data = self.__object_to_string(descr)
-        print("Websocket send: %s" % data)
         await self._websocket.send(data + '\n')
 
     async def receive(self):
