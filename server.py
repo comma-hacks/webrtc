@@ -88,8 +88,17 @@ async def signal(pc, signaling):
                 @channel.on('message')
                 async def on_message(message):
                     data = json.loads(message)
-                    if desktop_track:
-                        desktop_track.handle_message(data)
+                    if "type" in data:
+                        if data["type"] == "wrapped":
+                            data = json.loads(signaling.decrypt(data["payload"]["data"]))
+                        if desktop_track and data["type"] in desktop_track.valid_actions:
+                            desktop_track.handle_action(data["type"], data)
+                        else:
+                            print("ignored message")
+                            print(data)
+                    else:
+                        print("unsupported message")
+                        print(data)
 
             @pc.on("track")
             def on_track(track):
