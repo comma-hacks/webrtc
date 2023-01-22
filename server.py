@@ -11,6 +11,9 @@ from compressed_vipc_track import VisionIpcTrack
 from desktop_stream_track import DesktopStreamTrack
 from aiortc.contrib.signaling import BYE
 from secureput.secureput_signaling import SecureputSignaling
+import pyautogui
+import numpy
+from aiortc.contrib.media import MediaBlackhole
 
 # optional, for better performance
 # try:
@@ -18,12 +21,45 @@ from secureput.secureput_signaling import SecureputSignaling
 # except ImportError:
 #     uvloop = None
 
+
+
+
+
+import tracemalloc
+
+tracemalloc.start(10)
+
+
+async def heap_snapshot():
+    while True:
+        snapshot = tracemalloc.take_snapshot()
+        top_stats = snapshot.statistics('lineno')
+
+        print("[ Top 10 ]")
+        for stat in top_stats[:10]:
+            print(stat)
+        await asyncio.sleep(10)
+
+pyautogui.FAILSAFE = False
+
 cams = ["roadEncodeData","wideRoadEncodeData","driverEncodeData"]
-cam = 1
+cam = 2
+
+desktop_track = None
+recorder = None
+
+def get_desktop_track():
+    global desktop_track
+    if desktop_track != None:
+        desktop_track.stop()
+    desktop_track = DesktopStreamTrack()
+    return desktop_track
 
 async def signal(pc, signaling):
+    global recorder
+    
     await signaling.connect()
-
+    print("Connected to signaling server")
     while True:
         obj = await signaling.receive()
 
@@ -35,7 +71,10 @@ async def signal(pc, signaling):
             pc.addIceCandidate(obj)
 
         if isinstance(obj, RTCSessionDescription):
+            print("Got SDP")
+
             if pc != None and pc.iceConnectionState != "failed":
+                print("Closing previous connection")
                 await pc.close()
                 pc = RTCPeerConnection(configuration=RTCConfiguration([RTCIceServer("stun:stun.secureput.com:3478")]))
 
@@ -50,17 +89,32 @@ async def signal(pc, signaling):
                 print("data channel!")
                 @channel.on('message')
                 async def on_message(message):
-                    print("message!!")
+                    data = json.loads(message)
+                    if data["action"] == "mousemove" and desktop_track != None:
+                        pyautogui.moveTo(data["x"], data["y"], _pause=False)
+                    if data["action"] == "joystick" and desktop_track != None:
+                        x = numpy.interp(data["x"], (-40, 40), (0, desktop_track.resolution.width))
+                        y = numpy.interp(data["y"], (-40, 40), (desktop_track.resolution.height, 0))
+                        print(f'{data["y"]} {desktop_track.resolution.height} {y}')
+                        pyautogui.moveTo(x, y, _pause=False)
+
+            @pc.on("track")
+            def on_track(track):
+                print("Receiving %s" % track.kind)
+                recorder.addTrack(track)
+
 
             await pc.setRemoteDescription(obj)
+            await recorder.start()
             
             if obj.type == 'offer':
                 # TODO: stream the microphone
                 audio = None
 
-                video = VisionIpcTrack(cams[int(cam)], "tici")
-                # video = DesktopStreamTrack()
-                pc.addTrack(video)
+                # video = VisionIpcTrack(cams[int(cam)], "tici")
+                
+                # pc.addTrack(video)
+                pc.addTrack(get_desktop_track())
                 answer = await pc.createAnswer()
                 await pc.setLocalDescription(answer)
                 await signaling.send(pc.localDescription)
@@ -77,6 +131,8 @@ if __name__ == "__main__":
     parser.add_argument("--verbose", "-v", action="count")
     args = parser.parse_args()
 
+    recorder = MediaBlackhole()
+
     if args.verbose:
         logging.basicConfig(level=logging.DEBUG)
 
@@ -86,7 +142,10 @@ if __name__ == "__main__":
     pc = RTCPeerConnection(configuration=RTCConfiguration([RTCIceServer(args.stun_server)]))
     signaling = SecureputSignaling(args.signaling_server)
     
-    coro = signal(pc, signaling)
+    # coro = signal(pc, signaling)
+    # coro = asyncio.gather(watchdog.check_memory(), signal(pc, signaling))
+    coro = asyncio.gather(heap_snapshot(), signal(pc, signaling))
+
 
     # run event loop
     loop = asyncio.get_event_loop()
@@ -95,5 +154,6 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         pass
     finally:
+        loop.run_until_complete(recorder.stop())
         loop.run_until_complete(pc.close())
         loop.run_until_complete(signaling.close())

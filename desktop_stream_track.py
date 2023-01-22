@@ -2,16 +2,20 @@
 import av
 import asyncio
 from aiortc import VideoStreamTrack
-import numpy
+import Xlib
+import Xlib.display
+import os
 
 # https://ffmpeg.org/ffmpeg-devices.html#x11grab
 class DesktopStreamTrack(VideoStreamTrack):
     def __init__(self):
         super().__init__()
+        self.resolution = Xlib.display.Display(os.environ["DISPLAY"]).screen().root.get_geometry()
         options =  {
+            'draw_mouse': '1',
             'i':':0.0+0,0',
             'framerate':'20',
-            'video_size': '1920x1080'
+            'video_size': str(self.resolution.width) + "x" + str(self.resolution.height)
         }
         self.container = av.open(':0', format='x11grab', options=options)
 

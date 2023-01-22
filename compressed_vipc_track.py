@@ -63,7 +63,7 @@ if __name__ == "__main__":
     async def test():
         frame_count=0
         start_time=time_ns()
-        track = VisionIpcTrack("roadEncodeData", "192.168.99.200")
+        track = VisionIpcTrack("roadEncodeData", "tici")
         while True:
             await track.recv()
             now = time_ns()

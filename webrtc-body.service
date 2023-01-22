@@ -4,11 +4,11 @@ After=network.target
 
 [Service]
 Type=simple
-Restart=always
-RestartSec=1
 User=body
 WorkingDirectory=/home/body/webrtc-body
 ExecStart=/home/body/webrtc-body/server.py
+Restart=always
+Environment=DISPLAY=:0
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=graphical.target
