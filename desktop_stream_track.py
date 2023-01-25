@@ -42,11 +42,11 @@ class DesktopStreamTrack(VideoStreamTrack):
             x = numpy.interp(data["cursorPositionX"], (0, data["displayWidth"]), (0, self.resolution.width))
             y = numpy.interp(data["cursorPositionY"], (0, data["displayHeight"]), (0, self.resolution.height))
             pyautogui.moveTo(x, y, _pause=False)
-        elif action == "joystick":
-            x = numpy.interp(data["x"], (-38, 38), (0, self.resolution.width))
-            y = numpy.interp(data["y"], (-38, 38), (self.resolution.height, 0))
-            print(f'{data["y"]} {self.resolution.height} {y}')
-            pyautogui.moveTo(x, y, _pause=False)
+        # elif action == "joystick":
+        #     x = numpy.interp(data["x"], (-38, 38), (0, self.resolution.width))
+        #     y = numpy.interp(data["y"], (-38, 38), (self.resolution.height, 0))
+        #     print(f'{data["y"]} {self.resolution.height} {y}')
+        #     pyautogui.moveTo(x, y, _pause=False)
         elif action == "click":
             pyautogui.click()
         elif action == "rightclick":

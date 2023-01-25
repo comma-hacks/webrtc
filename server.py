@@ -9,11 +9,14 @@ from typing import OrderedDict
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceCandidate, RTCRtpCodecCapability, RTCConfiguration, RTCIceServer
 from compressed_vipc_track import VisionIpcTrack
 from desktop_stream_track import DesktopStreamTrack
+from dummy_streams import DummyAudioStreamTrack, DummyVideoStreamTrack
+
 from aiortc.contrib.signaling import BYE
 from secureput.secureput_signaling import SecureputSignaling
 
 from aiortc.contrib.media import MediaBlackhole
-
+import requests
+import numpy
 # optional, for better performance
 # try:
 #     import uvloop
@@ -40,9 +43,21 @@ async def heap_snapshot():
         await asyncio.sleep(10)
 
 
+def webjoystick(x, y):
+    x = numpy.interp(x, (-150, 150), (1, -1))
+    y = numpy.interp(y, (-150, 150), (1, -1))
+    request_url = f"http://tici:5000/control/{x:.4f}/{y:.4f}"
+    print(request_url)
+    response = requests.get(request_url)
+    # if response.status_code != 200:
+    #     print(f"Error: {response.status_code}")
+
+
+pc = None
 cams = ["roadEncodeData","wideRoadEncodeData","driverEncodeData"]
 cam = 2
 
+video_sender = None
 desktop_track = None
 recorder = None
 
@@ -53,8 +68,38 @@ def get_desktop_track():
     desktop_track = DesktopStreamTrack()
     return desktop_track
 
-async def signal(pc, signaling):
+current_track_name = None
+current_track = None
+track_map = {
+    "dummy": lambda : DummyVideoStreamTrack(),
+    "pc": lambda : get_desktop_track(),
+    "cam1": lambda : VisionIpcTrack(cams[int(0)], "tici"),
+    "cam2": lambda : VisionIpcTrack(cams[int(1)], "tici"),
+    "cam3": lambda : VisionIpcTrack(cams[int(2)], "tici")
+}
+
+async def change_tracks(name):
+    global current_track_name
+    global current_track
+    global video_sender
+    if current_track_name != name:
+        mktrack = track_map[name]
+        track = mktrack()
+        if current_track_name == None:
+            video_sender = pc.addTrack(track)
+        else:
+            print(f"Changing track to {name}")
+            video_sender.replaceTrack(track)
+        current_track = track
+        current_track_name = name
+    return current_track
+
+
+async def signal(signaling):
+    global pc
     global recorder
+    global current_track
+    global current_track_name
     
     await signaling.connect()
     print("Connected to signaling server")
@@ -70,17 +115,34 @@ async def signal(pc, signaling):
 
         if isinstance(obj, RTCSessionDescription):
             print("Got SDP")
-
-            if pc != None and pc.iceConnectionState != "failed":
-                print("Closing previous connection")
+            
+            if pc != None:
                 await pc.close()
-                pc = RTCPeerConnection(configuration=RTCConfiguration([RTCIceServer("stun:stun.secureput.com:3478")]))
+                current_track = None
+                current_track_name = None
+                print("Closed previous peer connection")
+            
+            pc = RTCPeerConnection(configuration=RTCConfiguration([RTCIceServer("stun:stun.secureput.com:3478")]))
+
+            if recorder != None:
+                await recorder.stop()
+                print("Stopped previous recorder")
+
+            recorder = MediaBlackhole()
+                        
 
             @pc.on("connectionstatechange")
             async def on_connectionstatechange():
                 print("Connection state is %s" % pc.iceConnectionState)
                 if pc.iceConnectionState == "failed":
-                    await pc.close()
+                    print("ICE connection failed.")
+                    if pc != None:
+                        await pc.close()
+                        pc = None
+                    if recorder != None:
+                        await recorder.stop()
+                        recorder = None
+                   
 
             @pc.on('datachannel')
             def on_datachannel(channel):
@@ -91,7 +153,15 @@ async def signal(pc, signaling):
                     if "type" in data:
                         if data["type"] == "wrapped":
                             data = json.loads(signaling.decrypt(data["payload"]["data"]))
-                        if desktop_track and data["type"] in desktop_track.valid_actions:
+                        elif data["type"] == "request_track":
+                            if data["name"] in track_map:
+                                await change_tracks(data["name"])
+                            else:
+                                print("unknown track requested")
+                                print(data)
+                        elif data["type"] == "joystick":
+                            webjoystick(data["x"], data["y"])
+                        elif desktop_track and data["type"] in desktop_track.valid_actions:
                             desktop_track.handle_action(data["type"], data)
                         else:
                             print("ignored message")
@@ -113,10 +183,8 @@ async def signal(pc, signaling):
                 # TODO: stream the microphone
                 audio = None
 
-                # video = VisionIpcTrack(cams[int(cam)], "tici")
-                
-                # pc.addTrack(video)
-                pc.addTrack(get_desktop_track())
+                await change_tracks("cam2")
+
                 answer = await pc.createAnswer()
                 await pc.setLocalDescription(answer)
                 await signaling.send(pc.localDescription)
@@ -133,18 +201,15 @@ if __name__ == "__main__":
     parser.add_argument("--verbose", "-v", action="count")
     args = parser.parse_args()
 
-    recorder = MediaBlackhole()
-
     if args.verbose:
         logging.basicConfig(level=logging.DEBUG)
 
     # if uvloop is not None:
     #     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
-    pc = RTCPeerConnection(configuration=RTCConfiguration([RTCIceServer(args.stun_server)]))
     signaling = SecureputSignaling(args.signaling_server)
     
-    coro = signal(pc, signaling)
+    coro = signal(signaling)
     # coro = asyncio.gather(watchdog.check_memory(), signal(pc, signaling))
     # coro = asyncio.gather(heap_snapshot(), signal(pc, signaling))
 
@@ -156,6 +221,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         pass
     finally:
-        loop.run_until_complete(recorder.stop())
-        loop.run_until_complete(pc.close())
         loop.run_until_complete(signaling.close())
