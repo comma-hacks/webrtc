@@ -1,7 +1,8 @@
 - [x] iphone
 - [x] control interface
-- battery view
 - [x] camera switcher
+- [ ] replacetrack is broken https://github.com/aiortc/aiortc/issues/304
+- battery view
 - lowcam view
 - multicam
 - depth view
