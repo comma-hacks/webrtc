@@ -44,13 +44,16 @@ async def heap_snapshot():
 
 
 def webjoystick(x, y):
-    x = numpy.interp(x, (-150, 150), (1, -1))
-    y = numpy.interp(y, (-150, 150), (1, -1))
+    outx = (1, -1)
+    outy = (-0.5, 0.5)
+    if current_track_name == "cam3":
+        # outx = (-1, 1)
+        outy = (0.5, -0.5)
+    x = numpy.interp(x, (-150, 150), outx)
+    y = numpy.interp(y, (-150, 150), outy)
     request_url = f"http://tici:5000/control/{x:.4f}/{y:.4f}"
     print(request_url)
-    response = requests.get(request_url)
-    # if response.status_code != 200:
-    #     print(f"Error: {response.status_code}")
+    requests.get(request_url)
 
 
 pc = None
