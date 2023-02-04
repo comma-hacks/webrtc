@@ -186,7 +186,7 @@ async def signal(signaling):
                 # TODO: stream the microphone
                 audio = None
 
-                await change_tracks("cam2")
+                await change_tracks("pc")
 
                 answer = await pc.createAnswer()
                 await pc.setLocalDescription(answer)
