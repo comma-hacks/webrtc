@@ -164,8 +164,8 @@ async def signal(signaling):
                                 print(data)
                         elif data["type"] == "joystick":
                             webjoystick(data["x"], data["y"])
-                        elif desktop_track and data["type"] in desktop_track.control_interface.valid_actions:
-                            desktop_track.handle_action(data["type"], data)
+                        elif desktop_track and desktop_track.input.supports(data["type"]):
+                            desktop_track.input.handle_action(data["type"], data)
                         else:
                             print("ignored message")
                             print(data)

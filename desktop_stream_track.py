@@ -12,7 +12,7 @@ class DesktopStreamTrack(VideoStreamTrack):
     def __init__(self):
         super().__init__()
         self.resolution = Xlib.display.Display(os.environ["DISPLAY"]).screen().root.get_geometry()
-        self.control_interface = DesktopControlInterface(self.resolution)
+        self.input = DesktopControlInterface(self.resolution)
         options =  {
             'draw_mouse': '1',
             'i':':0.0+0,0',
@@ -30,13 +30,10 @@ class DesktopStreamTrack(VideoStreamTrack):
         frame.pts = pts
         frame.time_base = time_base
         return frame
-    
-    def handle_action(self, action, data):
-        self.control_interface.handle_action(action, data)
             
     def stop(self) -> None:
         super().stop()
-        self.control_interface.stop()
+        self.input.stop()
 
 if __name__ == "__main__":
     from time import time_ns
