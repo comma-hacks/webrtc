@@ -1,6 +1,7 @@
-import numpy
-import keymap
-import libevdev
+import numpy # for mouse position interpolation
+import keymap # for mapping iOS folio keys to libevdev events
+import libevdev # for all low-level mouse and keyboard events
+import pyautogui # only for the high-level string "paste" support
 from libevdev import InputEvent, InputAbsInfo
 
 class DesktopControlInterface():
@@ -16,13 +17,15 @@ class DesktopControlInterface():
         self.dev.enable(libevdev.EV_KEY.BTN_LEFT)
         self.dev.enable(libevdev.EV_KEY.BTN_MIDDLE)
         self.dev.enable(libevdev.EV_KEY.BTN_RIGHT)
+        for value in keymap.iOStoLinux.values():
+            self.dev.enable(value)
         self.uinput = self.dev.create_uinput_device()
 
     def handle_action(self, action, data):
         if action == "mousemove":
             x = numpy.interp(data["cursorPositionX"], (0, data["displayWidth"]), (0, self.resolution.width))
             y = numpy.interp(data["cursorPositionY"], (0, data["displayHeight"]), (0, self.resolution.height))
-            print(f"mousemove {x} {y}")            
+            # print(f"mousemove {x} {y}")            
             events = [InputEvent(libevdev.EV_ABS.ABS_X, int(x)),
                     InputEvent(libevdev.EV_ABS.ABS_Y, int(y)),
                     InputEvent(libevdev.EV_SYN.SYN_REPORT, 0)]
@@ -46,50 +49,15 @@ class DesktopControlInterface():
             self.uinput.send_events(press)
         elif action == "keyboard":
             try:
-                # keymap.reload()
+                # use keymap.reload() here to reload your source changes when adding more keys
                 osKey = keymap.iOStoLinux[data["key"]]
-                print(osKey)
-                # self.ui.write(e.EV_KEY, osKey, data["direction"])
-                # self.ui.syn()
+                press = [libevdev.InputEvent(osKey, value=data["direction"]),
+                    libevdev.InputEvent(libevdev.EV_SYN.SYN_REPORT, value=0)]
+                self.uinput.send_events(press)
             except KeyError:
                 print(f"Unknown key: {data['key']}")
         elif action == "paste":
-            pass
-            # might as well support the secureput protocol completely
-            # pyautogui.write(data["payload"]["string"])
+            pyautogui.write(data["payload"]["string"])
 
     def supports(self, action):
         return action in ["keyboard", "leftclickbegan", "leftclickend", "rightclickbegan", "rightclickend", "mousemove", "paste"]
-
-    def stop(self):
-        pass
-        # self.ui.close()
-
-
-if __name__ == "__main__":
-    import time
-    import libevdev
-    from libevdev import InputEvent, InputAbsInfo
-    dev = libevdev.Device()
-    dev.name = 'some test device'
-    a = InputAbsInfo(minimum=0, maximum=1920, resolution=200)
-    dev.enable(libevdev.EV_ABS.ABS_X, data=a)
-    a = InputAbsInfo(minimum=0, maximum=1080, resolution=200)
-    dev.enable(libevdev.EV_ABS.ABS_Y, data=a)
-    dev.enable(libevdev.EV_KEY.BTN_LEFT)
-    dev.enable(libevdev.EV_KEY.BTN_MIDDLE)
-    dev.enable(libevdev.EV_KEY.BTN_RIGHT)
-
-    uinput = dev.create_uinput_device()
-    print("New device at {} ({})".format(uinput.devnode, uinput.syspath))
-
-    # Sleep for a bit so udev, libinput, Xorg, Wayland, ... all have had
-    # a chance to see the device and initialize it. Otherwise the event
-    # will be sent by the kernel but nothing is ready to listen to the
-    # device yet.
-    time.sleep(1)
-
-
-    events = [InputEvent(libevdev.EV_ABS.ABS_X, 1900),
-            InputEvent(libevdev.EV_ABS.ABS_Y, 1000),
-            InputEvent(libevdev.EV_SYN.SYN_REPORT, 0)]

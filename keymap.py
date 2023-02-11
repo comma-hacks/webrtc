@@ -1,4 +1,4 @@
-from evdev import ecodes as e
+from libevdev import EV_KEY as e
 
 # Some info can be found here
 # https://www.kernel.org/doc/Documentation/input/event-codes.txt
