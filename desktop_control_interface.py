@@ -28,12 +28,22 @@ class DesktopControlInterface():
                     InputEvent(libevdev.EV_SYN.SYN_REPORT, 0)]
             self.uinput.send_events(events)
 
-        elif action == "mousedown":
-            pass
-        elif action == "mouseup":
-            pass
-        elif action == "rightclick":
-            pass
+        elif action == "leftclickbegan":
+            press = [libevdev.InputEvent(libevdev.EV_KEY.BTN_LEFT, value=1),
+                    libevdev.InputEvent(libevdev.EV_SYN.SYN_REPORT, value=0)]
+            self.uinput.send_events(press)
+        elif action == "leftclickend":
+            press = [libevdev.InputEvent(libevdev.EV_KEY.BTN_LEFT, value=0),
+                    libevdev.InputEvent(libevdev.EV_SYN.SYN_REPORT, value=0)]
+            self.uinput.send_events(press)
+        elif action == "rightclickbegan":
+            press = [libevdev.InputEvent(libevdev.EV_KEY.BTN_RIGHT, value=1),
+                    libevdev.InputEvent(libevdev.EV_SYN.SYN_REPORT, value=0)]
+            self.uinput.send_events(press)
+        elif action == "rightclickend":
+            press = [libevdev.InputEvent(libevdev.EV_KEY.BTN_RIGHT, value=0),
+                    libevdev.InputEvent(libevdev.EV_SYN.SYN_REPORT, value=0)]
+            self.uinput.send_events(press)
         elif action == "keyboard":
             try:
                 # keymap.reload()
@@ -49,7 +59,7 @@ class DesktopControlInterface():
             # pyautogui.write(data["payload"]["string"])
 
     def supports(self, action):
-        return action in ["keyboard", "click", "rightclick", "mousemove", "joystick", "paste"]
+        return action in ["keyboard", "leftclickbegan", "leftclickend", "rightclickbegan", "rightclickend", "mousemove", "paste"]
 
     def stop(self):
         pass
