@@ -30,10 +30,6 @@ class DesktopStreamTrack(VideoStreamTrack):
         frame.pts = pts
         frame.time_base = time_base
         return frame
-            
-    def stop(self) -> None:
-        super().stop()
-        self.input.stop()
 
 if __name__ == "__main__":
     from time import time_ns
