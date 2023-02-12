@@ -18,29 +18,10 @@ from aiortc.contrib.media import MediaBlackhole
 import requests
 import numpy
 # optional, for better performance
-# try:
-#     import uvloop
-# except ImportError:
-#     uvloop = None
-
-
-
-
-
-import tracemalloc
-
-tracemalloc.start(10)
-
-
-async def heap_snapshot():
-    while True:
-        snapshot = tracemalloc.take_snapshot()
-        top_stats = snapshot.statistics('lineno')
-
-        print("[ Top 10 ]")
-        for stat in top_stats[:10]:
-            print(stat)
-        await asyncio.sleep(10)
+try:
+    import uvloop
+except ImportError:
+    uvloop = None
 
 
 def webjoystick(x, y):
@@ -207,8 +188,8 @@ if __name__ == "__main__":
     if args.verbose:
         logging.basicConfig(level=logging.DEBUG)
 
-    # if uvloop is not None:
-    #     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+    if uvloop is not None:
+        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
     signaling = SecureputSignaling(args.signaling_server)
     
