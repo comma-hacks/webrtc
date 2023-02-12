@@ -93,7 +93,10 @@ class SecureputSignaling(WebsocketSignaling):
             "payload": {
                 "name": self._app.config["deviceName"],
                 "device": self._app.config["deviceUUID"],
-                "account": self._app.config["accountUUID"]
+                "account": self._app.config["accountUUID"],
+                "metadata": {
+                    "isRobot": True
+                }
             }
         }))
 
