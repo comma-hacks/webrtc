@@ -137,7 +137,7 @@ async def signal(signaling):
                     if "type" in data:
                         if data["type"] == "wrapped":
                             data = json.loads(signaling.decrypt(data["payload"]["data"]))
-                        elif data["type"] == "request_track":
+                        if data["type"] == "request_track":
                             if data["name"] in track_map:
                                 await change_tracks(data["name"])
                             else:
