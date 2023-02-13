@@ -2,6 +2,9 @@ package main
 
 import (
 	"fmt"
+	"os"
+
+	"github.com/giorgisio/goav/avcodec"
 
 	zmq "github.com/pebbe/zmq4"
 )
@@ -37,6 +40,8 @@ func getPort(endpoint string) int {
 }
 
 func drainSock(socket *zmq.Socket, waitForOne bool) [][]byte {
+	// XXX need to use captproto
+	// https://github.com/capnproto/go-capnproto2
 	var ret [][]byte
 	for {
 		var dat []byte
@@ -69,12 +74,58 @@ func main() {
 	subscriber.SetSubscribe("")
 	subscriber.Connect(out)
 
+	avcodec.AvcodecRegisterAll()
+
+	// Find the HEVC decoder
+	codec := avcodec.AvcodecFindDecoderByName("hevc")
+	if codec == nil {
+		fmt.Println("HEVC decoder not found")
+		return
+	}
+
+	codecContext := codec.AvcodecAllocContext3()
+	if codecContext == nil {
+		fmt.Println("Failed to allocate codec context")
+		os.Exit(1)
+	}
+
+	// Open codec
+	if codecContext.AvcodecOpen2(codec, nil) < 0 {
+		fmt.Println("Could not open codec")
+		os.Exit(1)
+	}
+
 	for {
 		var frame []byte
 		for frame == nil {
 			msgs := drainSock(subscriber, true)
 			if len(msgs) > 0 {
-				frame = msgs[0]
+				/* Port the following Python aiortc code to Golang for Pion
+				   with evt_context as evt:
+				       evta = getattr(evt, evt.which())
+				       if evta.idx.encodeId != 0 and evta.idx.encodeId != (self.last_idx+1):
+				           print("DROP PACKET!")
+				       self.last_idx = evta.idx.encodeId
+				       if not self.seen_iframe and not (evta.idx.flags & V4L2_BUF_FLAG_KEYFRAME):
+				           print("waiting for iframe")
+				           continue
+				       self.time_q.append(time.monotonic())
+
+				       # put in header (first)
+				       if not self.seen_iframe:
+				           self.codec.decode(av.packet.Packet(evta.header))
+				           self.seen_iframe = True
+
+				       frames = self.codec.decode(av.packet.Packet(evta.data))
+				       if len(frames) == 0:
+				           print("DROP SURFACE")
+				           continue
+				       assert len(frames) == 1
+
+				       frame = frames[0]
+				       frame.pts = pts
+				       frame.time_base = time_base
+				*/
 			}
 		}
 		fmt.Println("Received frame with size:", len(frame), "bytes")
