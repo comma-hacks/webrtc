@@ -3,10 +3,15 @@ package main
 import (
 	"fmt"
 	"os"
+	"unsafe"
 
+	"capnproto.org/go/capnp/v3"
 	"github.com/giorgisio/goav/avcodec"
+	"github.com/giorgisio/goav/avutil"
 
 	zmq "github.com/pebbe/zmq4"
+
+	"github.com/commaai/cereal"
 )
 
 type Service struct {
@@ -95,37 +100,97 @@ func main() {
 		os.Exit(1)
 	}
 
+	var lastIdx = -1
+	var seenIframe = false
+	var V4L2_BUF_FLAG_KEYFRAME = uint32(8)
 	for {
+		// Allocate video frame
+		pFrame := avutil.AvFrameAlloc()
 		var frame []byte
 		for frame == nil {
 			msgs := drainSock(subscriber, true)
 			if len(msgs) > 0 {
-				/* Port the following Python aiortc code to Golang for Pion
-				   with evt_context as evt:
-				       evta = getattr(evt, evt.which())
-				       if evta.idx.encodeId != 0 and evta.idx.encodeId != (self.last_idx+1):
-				           print("DROP PACKET!")
-				       self.last_idx = evta.idx.encodeId
-				       if not self.seen_iframe and not (evta.idx.flags & V4L2_BUF_FLAG_KEYFRAME):
-				           print("waiting for iframe")
-				           continue
-				       self.time_q.append(time.monotonic())
+				for _, rawMsg := range msgs {
+					msg, err := capnp.Unmarshal(rawMsg)
+					if err != nil {
+						panic(err)
+					}
 
-				       # put in header (first)
-				       if not self.seen_iframe:
-				           self.codec.decode(av.packet.Packet(evta.header))
-				           self.seen_iframe = True
+					evt, err := cereal.ReadRootEncodeData(msg)
+					if err != nil {
+						panic(err)
+					}
 
-				       frames = self.codec.decode(av.packet.Packet(evta.data))
-				       if len(frames) == 0:
-				           print("DROP SURFACE")
-				           continue
-				       assert len(frames) == 1
+					ts := evt.UnixTimestampNanos()
 
-				       frame = frames[0]
-				       frame.pts = pts
-				       frame.time_base = time_base
-				*/
+					idx, err := evt.Idx()
+					if err != nil {
+						panic(err)
+					}
+					encodeId := idx.EncodeId()
+
+					fmt.Printf("ts: %d,encodeId: %d\n", ts, encodeId)
+
+					if encodeId != 0 && encodeId != uint32(lastIdx+1) {
+						fmt.Println("DROP PACKET!")
+					} else {
+						lastIdx = int(encodeId)
+
+						idxFlags := idx.Flags()
+
+						if !seenIframe && (idxFlags&V4L2_BUF_FLAG_KEYFRAME) != 0 {
+							fmt.Println("waiting for iframe")
+							continue
+						}
+
+						if !seenIframe {
+							// Decode video frame
+							pkt := avcodec.AvPacketAlloc()
+							if pkt == nil {
+								panic("cannot allocate packet")
+							}
+
+							pkt.AvInitPacket()
+							pkt.SetFlags(pkt.Flags() | avcodec.AV_CODEC_FLAG_TRUNCATED)
+
+							response := codecContext.AvcodecSendPacket(packet)
+							if response < 0 {
+								fmt.Printf("Error while sending a packet to the decoder: %s\n", avutil.ErrorFromCode(response))
+								panic("decoding error")
+							}
+							if response >= 0 {
+								response = codecContext.AvcodecReceiveFrame((*avcodec.Frame)(unsafe.Pointer(pFrame)))
+								if response == avutil.AvErrorEAGAIN || response == avutil.AvErrorEOF {
+									break
+								} else if response < 0 {
+									fmt.Printf("Error while receiving a frame from the decoder: %s\n", avutil.ErrorFromCode(response))
+									fmt.Println("DROP SURFACE")
+									continue
+								}
+								seenIframe = true
+							}
+						}
+
+						// frames, err := codec.Decode(av.Packet{Data: evt.Data()})
+						// if err != nil {
+						// 	fmt.Println("DROP SURFACE")
+						// 	continue
+						// }
+						// if len(frames) == 0 {
+						// 	fmt.Println("DROP SURFACE")
+						// 	continue
+						// }
+						// assert(len(frames) == 1)
+
+						// frame = frames[0].Data
+						// framePts := frames[0].Pts
+						// frameTimebase := frames[0].Timebase
+
+						// frame = append(append(make([]byte, 0, len(frame)+FrameHeaderLen), encodeUint32(uint32(len(frame)))...), frame...)
+						// binary.LittleEndian.PutUint32(frame[4:], encodeUint64(framePts))
+						// binary.LittleEndian.PutUint32(frame[12:], encodeUint64(frameTimebase))
+					}
+				}
 			}
 		}
 		fmt.Println("Received frame with size:", len(frame), "bytes")
