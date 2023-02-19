@@ -5,64 +5,12 @@ import (
 	"os"
 	"unsafe"
 
-	"capnproto.org/go/capnp/v3"
 	"github.com/giorgisio/goav/avcodec"
 	"github.com/giorgisio/goav/avutil"
 
-	zmq "github.com/pebbe/zmq4"
-
 	"github.com/commaai/cereal"
+	zmq "github.com/pebbe/zmq4"
 )
-
-type Service struct {
-	name       string
-	port       int
-	should_log bool
-	frequency  int
-	decimation int
-}
-
-var services = []Service{
-	{"roadEncodeData", 8062, false, 20, -1},
-	{"driverEncodeData", 8063, false, 20, -1},
-	{"wideRoadEncodeData", 8064, false, 20, -1},
-}
-
-func getPort(endpoint string) int {
-	port := -1
-	for _, s := range services {
-		if s.name == endpoint {
-			port = s.port
-			break
-		}
-	}
-
-	if port < 0 {
-		panic("invalid endpoint")
-	}
-
-	return port
-}
-
-func drainSock(socket *zmq.Socket, waitForOne bool) [][]byte {
-	// XXX need to use captproto
-	// https://github.com/capnproto/go-capnproto2
-	var ret [][]byte
-	for {
-		var dat []byte
-		var err error
-		if waitForOne && len(ret) == 0 {
-			dat, err = socket.RecvBytes(0)
-		} else {
-			dat, err = socket.RecvBytes(zmq.DONTWAIT)
-		}
-		if err != nil {
-			break
-		}
-		ret = append(ret, dat)
-	}
-	return ret
-}
 
 func main() {
 	// Create a new context
@@ -72,9 +20,8 @@ func main() {
 	// Connect to the socket
 	subscriber, _ := context.NewSocket(zmq.SUB)
 	defer subscriber.Close()
-	service := "roadEncodeData"
-	port := getPort(service)
-	out := fmt.Sprintf("tcp://tici:%d", port)
+
+	out := GetServiceURI("roadEncodeData")
 	fmt.Println(out)
 	subscriber.SetSubscribe("")
 	subscriber.Connect(out)
@@ -108,13 +55,9 @@ func main() {
 		pFrame := avutil.AvFrameAlloc()
 		var frame []byte
 		for frame == nil {
-			msgs := drainSock(subscriber, true)
+			msgs := DrainSock(subscriber, true)
 			if len(msgs) > 0 {
-				for _, rawMsg := range msgs {
-					msg, err := capnp.Unmarshal(rawMsg)
-					if err != nil {
-						panic(err)
-					}
+				for _, msg := range msgs {
 
 					evt, err := cereal.ReadRootEncodeData(msg)
 					if err != nil {
@@ -128,48 +71,60 @@ func main() {
 						panic(err)
 					}
 					encodeId := idx.EncodeId()
+					idxFlags := idx.Flags()
+					frameId := idx.FrameId()
+					segmentNum := idx.SegmentNum()
 
-					fmt.Printf("ts: %d,encodeId: %d\n", ts, encodeId)
+					fmt.Printf("ts: %d,frameId: %d,segmentNum: %d,encodeId: %d,idxFlags: %d\n", ts, frameId, segmentNum, encodeId, idxFlags)
 
+					continue
 					if encodeId != 0 && encodeId != uint32(lastIdx+1) {
 						fmt.Println("DROP PACKET!")
-					} else {
-						lastIdx = int(encodeId)
+					}
 
-						idxFlags := idx.Flags()
+					lastIdx = int(encodeId)
 
-						if !seenIframe && (idxFlags&V4L2_BUF_FLAG_KEYFRAME) != 0 {
-							fmt.Println("waiting for iframe")
-							continue
+					if !seenIframe && (idxFlags&V4L2_BUF_FLAG_KEYFRAME) == 0 {
+						fmt.Println("waiting for iframe")
+						continue
+					}
+
+					if !seenIframe {
+						// Decode video frame
+						pkt := avcodec.AvPacketAlloc()
+						if pkt == nil {
+							panic("cannot allocate packet")
 						}
 
-						if !seenIframe {
-							// Decode video frame
-							pkt := avcodec.AvPacketAlloc()
-							if pkt == nil {
-								panic("cannot allocate packet")
-							}
-
-							pkt.AvInitPacket()
-							pkt.SetFlags(pkt.Flags() | avcodec.AV_CODEC_FLAG_TRUNCATED)
-
-							response := codecContext.AvcodecSendPacket(packet)
-							if response < 0 {
-								fmt.Printf("Error while sending a packet to the decoder: %s\n", avutil.ErrorFromCode(response))
-								panic("decoding error")
-							}
-							if response >= 0 {
-								response = codecContext.AvcodecReceiveFrame((*avcodec.Frame)(unsafe.Pointer(pFrame)))
-								if response == avutil.AvErrorEAGAIN || response == avutil.AvErrorEOF {
-									break
-								} else if response < 0 {
-									fmt.Printf("Error while receiving a frame from the decoder: %s\n", avutil.ErrorFromCode(response))
-									fmt.Println("DROP SURFACE")
-									continue
-								}
-								seenIframe = true
-							}
+						// AvPacketFromData
+						header, err := evt.Header()
+						if err != nil {
+							panic(err)
 						}
+						headerPtr := unsafe.Pointer(&header[0])
+						pkt.AvPacketFromData((*uint8)(headerPtr), len(header))
+						// pkt.AvInitPacket()
+						pkt.SetFlags(pkt.Flags() | avcodec.AV_CODEC_FLAG_TRUNCATED)
+
+						response := codecContext.AvcodecSendPacket(pkt)
+						if response < 0 {
+							fmt.Printf("Error while sending a packet to the decoder: %s\n", avutil.ErrorFromCode(response))
+							// panic("decoding error")
+						}
+						if response >= 0 {
+							response = codecContext.AvcodecReceiveFrame((*avcodec.Frame)(unsafe.Pointer(pFrame)))
+							if response == avutil.AvErrorEAGAIN || response == avutil.AvErrorEOF {
+								fmt.Println("decode error")
+								break
+							} else if response < 0 {
+								fmt.Printf("Error while receiving a frame from the decoder: %s\n", avutil.ErrorFromCode(response))
+								fmt.Println("DROP SURFACE")
+								continue
+							}
+							fmt.Println("??")
+							seenIframe = true
+						}
+						fmt.Println("sss")
 
 						// frames, err := codec.Decode(av.Packet{Data: evt.Data()})
 						// if err != nil {
