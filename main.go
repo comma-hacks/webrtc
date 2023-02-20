@@ -59,29 +59,24 @@ func main() {
 			if len(msgs) > 0 {
 				for _, msg := range msgs {
 
-					evt, err := cereal.ReadRootEncodeData(msg)
+					evt, err := cereal.ReadRootEvent(msg)
 					if err != nil {
 						panic(err)
 					}
 
-					ts := evt.UnixTimestampNanos()
-
-					idx, err := evt.Idx()
+					encodeData, err := evt.RoadEncodeData()
 					if err != nil {
 						panic(err)
 					}
-					encodeId := idx.EncodeId()
-					idxFlags := idx.Flags()
-					frameId := idx.FrameId()
-					idxType := idx.Type().String()
-					segmentNum := idx.SegmentNum()
-					segmentId := idx.SegmentId()
 
-					fmt.Printf("ts: %d,frameId: %d,type:%s,encodeId: %d,segmentNum: %d,segmentId: %d,idxFlags: %d\n",
-						ts, frameId, idxType, encodeId, segmentNum, segmentId, idxFlags,
-					)
+					encodeIndex, err := encodeData.Idx()
+					if err != nil {
+						panic(err)
+					}
 
-					continue
+					encodeId := encodeIndex.EncodeId()
+					idxFlags := encodeIndex.Flags()
+
 					if encodeId != 0 && encodeId != uint32(lastIdx+1) {
 						fmt.Println("DROP PACKET!")
 					}
@@ -101,7 +96,7 @@ func main() {
 						}
 
 						// AvPacketFromData
-						header, err := evt.Header()
+						header, err := encodeData.Header()
 						if err != nil {
 							panic(err)
 						}
