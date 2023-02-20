@@ -73,9 +73,13 @@ func main() {
 					encodeId := idx.EncodeId()
 					idxFlags := idx.Flags()
 					frameId := idx.FrameId()
+					idxType := idx.Type().String()
 					segmentNum := idx.SegmentNum()
+					segmentId := idx.SegmentId()
 
-					fmt.Printf("ts: %d,frameId: %d,segmentNum: %d,encodeId: %d,idxFlags: %d\n", ts, frameId, segmentNum, encodeId, idxFlags)
+					fmt.Printf("ts: %d,frameId: %d,type:%s,encodeId: %d,segmentNum: %d,segmentId: %d,idxFlags: %d\n",
+						ts, frameId, idxType, encodeId, segmentNum, segmentId, idxFlags,
+					)
 
 					continue
 					if encodeId != 0 && encodeId != uint32(lastIdx+1) {
