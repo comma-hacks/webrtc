@@ -11,11 +11,18 @@ for f in ../../*.capnp; do
   echo "using Go = import \"/go.capnp\";" > $out
   echo "\$Go.package(\"cereal\");" >> $out
   echo "\$Go.import(\"cereal\");" >> $out
-  cat $f | grep -v 'c++.capnp' | grep -v '$Cxx.namespace' >> $out
+  cat $f |\
+  # Remove the C++ imports
+  grep -v 'c++.capnp' | grep -v '$Cxx.namespace' |\
+  # Avoid collisions by annotating
+  sed 's/message @6 :Text;/message @6 :Text $Go.name("text");/'\
+  >> $out
 done
-go install capnproto.org/go/capnp/v3/capnpc-go@latest
-capnp compile -I$(go env GOPATH)/src/capnproto.org/go/capnp/std -o go:../../gen/go *.capnp
+# go install capnproto.org/go/capnp/v3/capnpc-go@latest
+# capnp compile -I$(go env GOPATH)/src/capnproto.org/go/capnp/std -o go:../../gen/go *.capnp
+capnp compile -I../../../go-capnproto2/std -o go:../../gen/go *.capnp
 popd # leave ./tmp/go
+rm -rf tmp
 
 ## Services
 
