@@ -1,16 +1,22 @@
 package main
 
 import (
+	"errors"
 	"fmt"
-	"os"
-	"unsafe"
+	"log"
+	"strings"
 
-	"github.com/giorgisio/goav/avcodec"
-	"github.com/giorgisio/goav/avutil"
+	"github.com/asticode/go-astiav"
 
 	"github.com/commaai/cereal"
 	zmq "github.com/pebbe/zmq4"
 )
+
+type stream struct {
+	decCodec        *astiav.Codec
+	decCodecContext *astiav.CodecContext
+	inputStream     *astiav.Stream
+}
 
 func main() {
 	// Create a new context
@@ -26,33 +32,44 @@ func main() {
 	subscriber.SetSubscribe("")
 	subscriber.Connect(out)
 
-	avcodec.AvcodecRegisterAll()
+	// Handle ffmpeg logs
+	astiav.SetLogLevel(astiav.LogLevelDebug)
+	astiav.SetLogCallback(func(l astiav.LogLevel, fmt, msg, parent string) {
+		log.Printf("ffmpeg log: %s (level: %d)\n", strings.TrimSpace(msg), l)
+	})
 
-	// Find the HEVC decoder
-	codec := avcodec.AvcodecFindDecoderByName("hevc")
-	if codec == nil {
-		fmt.Println("HEVC decoder not found")
-		return
+	// Create stream
+	s := &stream{inputStream: nil}
+
+	// Find decoder
+	if s.decCodec = astiav.FindDecoder(astiav.CodecIDHevc); s.decCodec == nil {
+		log.Fatal(errors.New("main: codec is nil"))
 	}
 
-	codecContext := codec.AvcodecAllocContext3()
-	if codecContext == nil {
-		fmt.Println("Failed to allocate codec context")
-		os.Exit(1)
+	// Alloc codec context
+	if s.decCodecContext = astiav.AllocCodecContext(s.decCodec); s.decCodecContext == nil {
+		log.Fatal(errors.New("main: codec context is nil"))
 	}
+	defer s.decCodecContext.Free()
 
-	// Open codec
-	if codecContext.AvcodecOpen2(codec, nil) < 0 {
-		fmt.Println("Could not open codec")
-		os.Exit(1)
+	// Open codec context
+	if err := s.decCodecContext.Open(s.decCodec, nil); err != nil {
+		log.Fatal(fmt.Errorf("main: opening codec context failed: %w", err))
 	}
 
 	var lastIdx = -1
 	var seenIframe = false
 	var V4L2_BUF_FLAG_KEYFRAME = uint32(8)
+
+	// Alloc packet
+	pkt := astiav.AllocPacket()
+	defer pkt.Free()
+
+	// Alloc frame
+	f := astiav.AllocFrame()
+	defer f.Free()
+
 	for {
-		// Allocate video frame
-		pFrame := avutil.AvFrameAlloc()
 		var frame []byte
 		for frame == nil {
 			msgs := DrainSock(subscriber, true)
@@ -90,63 +107,51 @@ func main() {
 
 					if !seenIframe {
 						// Decode video frame
-						pkt := avcodec.AvPacketAlloc()
-						if pkt == nil {
-							panic("cannot allocate packet")
-						}
 
 						// AvPacketFromData
 						header, err := encodeData.Header()
 						if err != nil {
 							panic(err)
 						}
-						headerPtr := unsafe.Pointer(&header[0])
-						pkt.AvPacketFromData((*uint8)(headerPtr), len(header))
-						// pkt.AvInitPacket()
-						pkt.SetFlags(pkt.Flags() | avcodec.AV_CODEC_FLAG_TRUNCATED)
 
-						response := codecContext.AvcodecSendPacket(pkt)
-						if response < 0 {
-							fmt.Printf("Error while sending a packet to the decoder: %s\n", avutil.ErrorFromCode(response))
-							// panic("decoding error")
+						if err := pkt.FromData(header); err != nil {
+							log.Fatal(fmt.Errorf("main: packet header load failed: %w", err))
 						}
-						if response >= 0 {
-							response = codecContext.AvcodecReceiveFrame((*avcodec.Frame)(unsafe.Pointer(pFrame)))
-							if response == avutil.AvErrorEAGAIN || response == avutil.AvErrorEOF {
-								fmt.Println("decode error")
-								break
-							} else if response < 0 {
-								fmt.Printf("Error while receiving a frame from the decoder: %s\n", avutil.ErrorFromCode(response))
-								fmt.Println("DROP SURFACE")
-								continue
-							}
-							fmt.Println("??")
-							seenIframe = true
+
+						// Send packet
+						if err := s.decCodecContext.SendPacket(pkt); err != nil {
+							log.Fatal(fmt.Errorf("main: sending packet failed: %w", err))
 						}
-						fmt.Println("sss")
 
-						// frames, err := codec.Decode(av.Packet{Data: evt.Data()})
-						// if err != nil {
-						// 	fmt.Println("DROP SURFACE")
-						// 	continue
-						// }
-						// if len(frames) == 0 {
-						// 	fmt.Println("DROP SURFACE")
-						// 	continue
-						// }
-						// assert(len(frames) == 1)
-
-						// frame = frames[0].Data
-						// framePts := frames[0].Pts
-						// frameTimebase := frames[0].Timebase
-
-						// frame = append(append(make([]byte, 0, len(frame)+FrameHeaderLen), encodeUint32(uint32(len(frame)))...), frame...)
-						// binary.LittleEndian.PutUint32(frame[4:], encodeUint64(framePts))
-						// binary.LittleEndian.PutUint32(frame[12:], encodeUint64(frameTimebase))
+						seenIframe = true
 					}
+
+					// AvPacketFromData
+					data, err := encodeData.Data()
+					if err != nil {
+						panic(err)
+					}
+
+					if err := pkt.FromData(data); err != nil {
+						log.Fatal(fmt.Errorf("main: packet header load failed: %w", err))
+					}
+
+					// Send packet
+					if err := s.decCodecContext.SendPacket(pkt); err != nil {
+						log.Fatal(fmt.Errorf("main: sending packet failed: %w", err))
+					}
+
+					if err := s.decCodecContext.ReceiveFrame(f); err != nil {
+						if errors.Is(err, astiav.ErrEof) || errors.Is(err, astiav.ErrEagain) {
+							break
+						}
+						log.Fatal(fmt.Errorf("main: receiving frame failed: %w", err))
+					}
+
+					// Do something with decoded frame
+					log.Printf("new frame: stream %d - pts: %d", pkt.StreamIndex(), f.Pts())
 				}
 			}
 		}
-		fmt.Println("Received frame with size:", len(frame), "bytes")
 	}
 }
