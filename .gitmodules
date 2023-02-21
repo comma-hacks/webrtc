@@ -7,3 +7,6 @@
 [submodule "go-astiav"]
 	path = go-astiav
 	url = https://github.com/kfatehi/go-astiav.git
+[submodule "signaling"]
+	path = signaling
+	url = git@github.com:secureput/signaling.git
