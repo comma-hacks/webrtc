@@ -6,4 +6,4 @@
 	url = https://github.com/capnproto/go-capnproto2.git
 [submodule "go-astiav"]
 	path = go-astiav
-	url = ./go-astiav
+	url = https://github.com/kfatehi/go-astiav.git
