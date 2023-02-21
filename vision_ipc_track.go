@@ -127,7 +127,7 @@ func (v *VisionIpcTrack) Start() {
 	}
 	Open = true
 	for Open {
-		msgs := DrainSock(v.subscriber, true)
+		msgs := DrainSock(v.subscriber, false)
 		if len(msgs) > 0 {
 			for _, msg := range msgs {
 
