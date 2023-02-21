@@ -23,14 +23,8 @@ func main() {
 
 	go track.Start()
 
-	count := 0
 	for frame := range track.Frame {
 		// Do something with decoded frame
 		fmt.Println(frame.Roll)
-		count++
-
-		if count > 100 {
-			track.Stop()
-		}
 	}
 }
