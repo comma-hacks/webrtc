@@ -1,8 +1,9 @@
 - [x] iphone
 - [x] control interface
-- [x] camera switcher
-- [ ] replacetrack is broken https://github.com/aiortc/aiortc/issues/304 and the team seems uninterested, meanwhile Pion has been supporting it for 3 years https://github.com/pion/webrtc/pull/1527 so porting to go may really make sense. maybe other issues around performance will be resolved too by doing so.
-      currently struggling with decoding the hevc but perhaps we can remove goav now and start using pion for these functions...  https://github.com/pion/rtp/blob/master/codecs/h265_packet_test.go
+- [x] camera switcher: discovered that it is broken https://github.com/aiortc/aiortc/issues/304 meanwhile Pion has been supporting it for 3 years https://github.com/pion/webrtc/pull/1527
+beginning of port from python/aiortc to go/pion ... maybe other issues around performance will be resolved too by doing so.
+- [x] write a go version of the compressed_vipc decoder demo
+- [ ] write a Pion-compatible vision IPC track
 - battery view
 - lowcam view
 - multicam
