@@ -13,7 +13,7 @@ func main() {
 	if err != nil {
 		log.Fatal(fmt.Errorf("main: creating track failed: %w", err))
 	}
-	defer track.Close()
+	defer track.Stop()
 
 	// Handle ffmpeg logs
 	astiav.SetLogLevel(astiav.LogLevelError)
@@ -21,15 +21,17 @@ func main() {
 		log.Printf("ffmpeg log: %s (level: %d)\n", strings.TrimSpace(msg), l)
 	})
 
-	for {
-		frame, err := track.ReceiveFrame()
-		if err != nil {
-			log.Fatal(fmt.Errorf("main: receive frame failed: %w", err))
-			continue
-		}
+	go track.Start()
 
+	count := 0
+	for frame := range track.frameChannel {
 		// Do something with decoded frame
 		// log.Printf("%d, new frame: width: %d", track.networkLatency, frame.Width())
 		frame.Pts()
+		count++
+
+		if count > 10 {
+			track.Stop()
+		}
 	}
 }
