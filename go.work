@@ -3,4 +3,7 @@ go 1.19
 use (
 	.
 	./signaling/go
+	./go-astiav
+	./go-capnproto2
+	./cereal/gen/go
 )
