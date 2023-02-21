@@ -35,7 +35,12 @@ type VisionIpcTrack struct {
 	pcLatency      float64
 	timeQ          []int64
 
-	frameChannel chan *astiav.Frame
+	Frame chan *Frame
+}
+
+type Frame struct {
+	Frame *astiav.Frame
+	Roll  string
 }
 
 var Open = false
@@ -97,7 +102,7 @@ func NewVisionIpcTrack(name string) (track *VisionIpcTrack, err error) {
 		pcLatency:      0.0,
 		timeQ:          []int64{},
 
-		frameChannel: make(chan *astiav.Frame),
+		Frame: make(chan *Frame),
 	}, nil
 }
 
@@ -113,7 +118,7 @@ func (v *VisionIpcTrack) Stop() {
 		v.subscriber.Close()
 		v.context.Term()
 	}()
-	<-v.frameChannel
+	<-v.Frame
 }
 
 func (v *VisionIpcTrack) Start() {
@@ -219,7 +224,7 @@ func (v *VisionIpcTrack) Start() {
 
 				v.pcLatency = ((float64(time.Now().UnixNano()) / 1e6) - float64(v.timeQ[0]))
 				v.timeQ = v.timeQ[1:]
-				fmt.Printf("%2d %4d %.3f %.3f roll %6.2f ms latency %6.2f ms + %6.2f ms + %6.2f ms = %6.2f ms %d %s\n",
+				roll := fmt.Sprintf("%2d %4d %.3f %.3f roll %6.2f ms latency %6.2f ms + %6.2f ms + %6.2f ms = %6.2f ms %d %s",
 					len(msgs),
 					encodeId,
 					(float64(logMonoTime) / 1e9),
@@ -232,10 +237,10 @@ func (v *VisionIpcTrack) Start() {
 					len(data),
 					v.name,
 				)
-				v.frameChannel <- v.f
+				v.Frame <- &Frame{Frame: v.f, Roll: roll}
 
 			}
 		}
 	}
-	close(v.frameChannel)
+	close(v.Frame)
 }

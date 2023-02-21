@@ -24,13 +24,12 @@ func main() {
 	go track.Start()
 
 	count := 0
-	for frame := range track.frameChannel {
+	for frame := range track.Frame {
 		// Do something with decoded frame
-		// log.Printf("%d, new frame: width: %d", track.networkLatency, frame.Width())
-		frame.Pts()
+		fmt.Println(frame.Roll)
 		count++
 
-		if count > 10 {
+		if count > 100 {
 			track.Stop()
 		}
 	}
