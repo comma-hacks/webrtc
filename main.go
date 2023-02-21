@@ -1,30 +1,25 @@
 package main
 
 import (
-	"fmt"
 	"log"
-	"strings"
-
-	"github.com/asticode/go-astiav"
+	"secureput"
 )
 
 func main() {
-	track, err := NewVisionIpcTrack("roadEncodeData")
-	if err != nil {
-		log.Fatal(fmt.Errorf("main: creating track failed: %w", err))
+	signal := secureput.Create()
+	signal.Gui = &Face{app: &signal}
+	go signal.RunDaemonMode()
+
+	if !signal.Paired() {
+		go signal.Gui.Show()
+		log.Println("Waiting to pair.")
+		<-signal.PairChannel
 	}
-	defer track.Stop()
 
-	// Handle ffmpeg logs
-	astiav.SetLogLevel(astiav.LogLevelError)
-	astiav.SetLogCallback(func(l astiav.LogLevel, fmt, msg, parent string) {
-		log.Printf("ffmpeg log: %s (level: %d)\n", strings.TrimSpace(msg), l)
-	})
+	go TestVisionIPCTrack("roadEncodeData")
 
-	go track.Start()
-
-	for frame := range track.Frame {
-		// Do something with decoded frame
-		fmt.Println(frame.Roll)
+	for {
+		select {}
 	}
+
 }

@@ -3,7 +3,7 @@ from uuid import uuid4
 from socket import gethostname
 import json
 import pyqrcode
-from secureput.secret import generate_secret_key
+from .secret import generate_secret_key
 
 class App:
     def __init__(self):  

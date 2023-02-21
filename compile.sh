@@ -60,4 +60,8 @@ EOF
 popd # leave ./cereal
 
 # Go program
-# go build -o webrtc-body main.go
+export CGO_LDFLAGS="-L$PWD/go-astiav/tmp/n4.4.1/lib/"
+export CGO_CXXFLAGS="-I$PWD/go-astiav/tmp/n4.4.1/include/"
+export PKG_CONFIG_PATH="$PWD/go-astiav/tmp/n4.4.1/lib/pkgconfig"
+mkdir dist
+go build -o dist/go-webrtc-body .

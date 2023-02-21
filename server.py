@@ -12,7 +12,7 @@ from desktop_stream_track import DesktopStreamTrack
 from dummy_streams import DummyAudioStreamTrack, DummyVideoStreamTrack
 
 from aiortc.contrib.signaling import BYE
-from secureput.secureput_signaling import SecureputSignaling
+from signaling.python.secureput_signaling import SecureputSignaling
 
 from aiortc.contrib.media import MediaBlackhole
 import requests

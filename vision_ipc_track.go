@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/asticode/go-astiav"
@@ -243,4 +244,25 @@ func (v *VisionIpcTrack) Start() {
 		}
 	}
 	close(v.Frame)
+}
+
+func TestVisionIPCTrack(name string) {
+	track, err := NewVisionIpcTrack(name)
+	if err != nil {
+		log.Fatal(fmt.Errorf("main: creating track failed: %w", err))
+	}
+	defer track.Stop()
+
+	// Handle ffmpeg logs
+	astiav.SetLogLevel(astiav.LogLevelError)
+	astiav.SetLogCallback(func(l astiav.LogLevel, fmt, msg, parent string) {
+		log.Printf("ffmpeg log: %s (level: %d)\n", strings.TrimSpace(msg), l)
+	})
+
+	go track.Start()
+
+	for frame := range track.Frame {
+		// Do something with decoded frame
+		fmt.Println(frame.Roll)
+	}
 }

@@ -2,10 +2,9 @@ import asyncio
 from aiortc.contrib.signaling import RTCSessionDescription, RTCIceCandidate, candidate_from_sdp, candidate_to_sdp
 import json
 
-from secureput.websocket_signaling import WebsocketSignaling
-import secureput.aes as aes
-from secureput.app import App
-import traceback
+from .websocket_signaling import WebsocketSignaling
+from . import aes
+from .app import App
 
 class SecureputSignaling(WebsocketSignaling):
     def __init__(self, server):
