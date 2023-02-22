@@ -6,17 +6,17 @@ import (
 )
 
 func main() {
-	signal := secureput.Create()
+	signal := secureput.Create("go-webrtc-body")
 	signal.Gui = &Face{app: &signal}
 	go signal.RunDaemonMode()
 
 	if !signal.Paired() {
 		go signal.Gui.Show()
 		log.Println("Waiting to pair.")
-		<-signal.PairChannel
+		<-signal.PairWaitChannel
 	}
 
-	go TestVisionIPCTrack("roadEncodeData")
+	// go TestVisionIPCTrack("roadEncodeData")
 
 	for {
 		select {}
