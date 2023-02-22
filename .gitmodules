@@ -13,3 +13,6 @@
 [submodule "pion/webrtc"]
 	path = pion/webrtc
 	url = https://github.com/pion/webrtc.git
+[submodule "pion/rtp"]
+	path = pion/rtp
+	url = https://github.com/pion/rtp.git

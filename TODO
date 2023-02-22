@@ -3,7 +3,7 @@
 - [x] camera switcher: discovered that it is broken https://github.com/aiortc/aiortc/issues/304 meanwhile Pion has been supporting it for 3 years https://github.com/pion/webrtc/pull/1527
 beginning of port from python/aiortc to go/pion ... maybe other issues around performance will be resolved too by doing so.
 - [x] write a go version of the compressed_vipc decoder demo
-- [ ] write a Pion-compatible vision IPC track
+- [ ] write a Pion-compatible vision IPC track by looking at https://github.com/pion/webrtc/blob/master/examples/rtp-to-webrtc/main.go and https://github.com/asticode/go-astiav/blob/master/examples/transcoding/main.go
 - battery view
 - lowcam view
 - multicam

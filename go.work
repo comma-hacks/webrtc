@@ -7,4 +7,5 @@ use (
 	./go-capnproto2
 	./cereal/gen/go
 	./pion/webrtc
+	./pion/rtp
 )

@@ -1,35 +1,99 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"secureput"
+	"strings"
 
+	"github.com/asticode/go-astiav"
 	"github.com/pion/webrtc/v3"
 )
 
-var vipctrack *VisionIpcTrack
+var visionTrack *VisionIpcTrack
 
-func StopTrack() {
-	if vipctrack != nil {
-		vipctrack.Stop()
-		vipctrack = nil
-	}
-}
-
-func ReplaceTrack(prefix string, pc *webrtc.PeerConnection) {
-	StopTrack()
+func ReplaceTrack(prefix string, peerConnection *webrtc.PeerConnection) {
 	var err error
-	vipctrack, err = NewVisionIpcTrack(prefix + "EncodeData")
+	if visionTrack != nil {
+		visionTrack.Stop()
+	}
+	visionTrack, err = NewVisionIpcTrack(prefix + "EncodeData")
 	if err != nil {
 		log.Fatal(fmt.Errorf("main: creating track failed: %w", err))
 	}
-	go vipctrack.Start()
-
-	webrtc.newtrack
-	for frame := range vipctrack.Frame {
-		// Do something with decoded frame
+	// Create a video track
+	videoTrack, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264}, "video", "pion")
+	if err != nil {
+		panic(err)
 	}
+	rtpSender, err := peerConnection.AddTrack(videoTrack)
+	if err != nil {
+		panic(err)
+	}
+	// Later on, we will use rtpSender.ReplaceTrack() for graceful track replacement
+
+	// Read incoming RTCP packets
+	// Before these packets are returned they are processed by interceptors. For things
+	// like NACK this needs to be called.
+	go func() {
+		rtcpBuf := make([]byte, 1500)
+		for {
+			if _, _, rtcpErr := rtpSender.Read(rtcpBuf); rtcpErr != nil {
+				return
+			}
+		}
+	}()
+
+	// Set the handler for ICE connection state
+	// This will notify you when the peer has connected/disconnected
+	peerConnection.OnICEConnectionStateChange(func(connectionState webrtc.ICEConnectionState) {
+		fmt.Printf("Connection State has changed %s \n", connectionState.String())
+		if connectionState.String() == "disconnected" {
+			visionTrack.Stop()
+		} else if connectionState == webrtc.ICEConnectionStateFailed {
+			visionTrack.Stop()
+			if closeErr := peerConnection.Close(); closeErr != nil {
+				log.Println(fmt.Errorf("main: peer connection closed due to error: %w", err))
+			}
+		} else if connectionState.String() == "connected" {
+			astiav.SetLogLevel(astiav.LogLevelDebug)
+			astiav.SetLogCallback(func(l astiav.LogLevel, fmt, msg, parent string) {
+				log.Printf("ffmpeg log: %s (level: %d)\n", strings.TrimSpace(msg), l)
+			})
+			go func() {
+				go visionTrack.Start()
+				defer visionTrack.Stop()
+				for visionTrack != nil {
+					for frame := range visionTrack.Frame {
+						// Do something with decoded frame
+						fmt.Println(frame.Roll)
+
+						// so right now frame is a raw decoded AVFrame
+						// https://github.com/FFmpeg/FFmpeg/blob/n5.0/libavutil/frame.h#L317
+						// avframe := frame.Frame
+
+						// we need to:
+						// 1. transcode to h264 with adaptive bitrate using astiav
+
+						// 2. create an RTP packet with h264 data inside using pion's rtp packetizer
+						var rtpPacket []byte
+						// 3. write the RTP packet to the videoTrack
+
+						if _, err = videoTrack.Write(rtpPacket); err != nil {
+							if errors.Is(err, io.ErrClosedPipe) {
+								// The peerConnection has been closed.
+								return
+							}
+
+							log.Println(fmt.Errorf("rtp write error: %w", err))
+						}
+					}
+				}
+			}()
+		}
+	})
 }
 
 func main() {
@@ -45,11 +109,7 @@ func main() {
 	signal.OnPeerConnectionCreated = func(pc *webrtc.PeerConnection) {
 		ReplaceTrack("road", pc)
 	}
-	signal.OnICEConnectionStateChange = func(connectionState webrtc.ICEConnectionState) {
-		if connectionState.String() == "disconnected" {
-			StopTrack()
-		}
-	}
 	for {
+		select {}
 	}
 }
