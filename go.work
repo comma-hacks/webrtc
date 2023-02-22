@@ -6,4 +6,5 @@ use (
 	./go-astiav
 	./go-capnproto2
 	./cereal/gen/go
+	./pion/webrtc
 )

@@ -10,3 +10,6 @@
 [submodule "signaling"]
 	path = signaling
 	url = git@github.com:secureput/signaling.git
+[submodule "pion/webrtc"]
+	path = pion/webrtc
+	url = https://github.com/pion/webrtc.git
