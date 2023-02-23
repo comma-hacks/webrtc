@@ -21,12 +21,12 @@ func main() {
 		<-signal.PairWaitChannel
 	}
 	signal.OnPeerConnectionCreated = func(pc *webrtc.PeerConnection) {
-		// ReplaceTrack("road", pc)
+		ReplaceTrack("road", pc)
 	}
 
-	visionTrack, _ = NewVisionIpcTrack("roadEncodeData")
-	videoTrack, _ := visionTrack.NewTrackRTP()
-	visionTrack.StartRTP(videoTrack)
+	// visionTrack, _ = NewVisionIpcTrack("roadEncodeData")
+	// _, _ = visionTrack.NewTrackRTP()
+	// visionTrack.StartRTP()
 
 	for {
 		select {}
@@ -78,7 +78,7 @@ func ReplaceTrack(prefix string, peerConnection *webrtc.PeerConnection) {
 				log.Println(fmt.Errorf("main: peer connection closed due to error: %w", err))
 			}
 		} else if connectionState.String() == "connected" {
-			go visionTrack.StartRTP(videoTrack)
+			go visionTrack.StartRTP()
 		}
 	})
 }

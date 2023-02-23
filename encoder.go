@@ -53,10 +53,13 @@ func NewEncoder(params EncoderParams) (ts *Encoder, err error) {
 
 	s.encCodecContext.SetHeight(params.Height)
 	s.encCodecContext.SetPixelFormat(params.PixelFormat)
-	s.encCodecContext.SetBitRate(1000)
+	s.encCodecContext.SetBitRate(200_000)
 	s.encCodecContext.SetSampleAspectRatio(params.AspectRatio)
 	s.encCodecContext.SetTimeBase(params.TimeBase)
 	s.encCodecContext.SetWidth(params.Width)
+
+	// Update flags
+	s.encCodecContext.SetFlags(s.encCodecContext.Flags().Add(astiav.CodecContextFlagGlobalHeader))
 
 	// Open codec context
 	if err = s.encCodecContext.Open(s.encCodec, nil); err != nil {
