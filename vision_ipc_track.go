@@ -14,7 +14,7 @@ import (
 
 const V4L2_BUF_FLAG_KEYFRAME = uint32(8)
 
-type Stream struct {
+type VisionIpcTrackDecoderStream struct {
 	decCodec        *astiav.Codec
 	decCodecContext *astiav.CodecContext
 	inputStream     *astiav.Stream
@@ -22,7 +22,7 @@ type Stream struct {
 
 type VisionIpcTrack struct {
 	name       string
-	stream     *Stream
+	stream     *VisionIpcTrackDecoderStream
 	context    *zmq.Context
 	subscriber *zmq.Socket
 	lastIdx    int64
@@ -64,7 +64,7 @@ func NewVisionIpcTrack(name string) (track *VisionIpcTrack, err error) {
 	subscriber.Connect(GetServiceURI(name))
 
 	// Create stream
-	s := &Stream{inputStream: nil}
+	s := &VisionIpcTrackDecoderStream{inputStream: nil}
 
 	// Find decoder
 	if s.decCodec = astiav.FindDecoder(astiav.CodecIDHevc); s.decCodec == nil {
@@ -75,6 +75,12 @@ func NewVisionIpcTrack(name string) (track *VisionIpcTrack, err error) {
 	if s.decCodecContext = astiav.AllocCodecContext(s.decCodec); s.decCodecContext == nil {
 		return nil, errors.New("main: codec context is nil")
 	}
+
+	s.decCodecContext.SetHeight(track.Height())
+	s.decCodecContext.SetPixelFormat(track.PixelFormat())
+	s.decCodecContext.SetSampleAspectRatio(track.AspectRatio())
+	s.decCodecContext.SetTimeBase(track.TimeBase())
+	s.decCodecContext.SetWidth(track.Width())
 
 	// Open codec context
 	if err := s.decCodecContext.Open(s.decCodec, nil); err != nil {
@@ -105,6 +111,30 @@ func NewVisionIpcTrack(name string) (track *VisionIpcTrack, err error) {
 
 		Frame: make(chan *Frame),
 	}, nil
+}
+
+func (v *VisionIpcTrack) TimeBase() (t astiav.Rational) {
+	return astiav.NewRational(v.FrameRate(), 1)
+}
+
+func (v *VisionIpcTrack) FrameRate() int {
+	return 20
+}
+
+func (v *VisionIpcTrack) Height() int {
+	return 1208
+}
+
+func (v *VisionIpcTrack) Width() int {
+	return 1928
+}
+
+func (v *VisionIpcTrack) AspectRatio() (t astiav.Rational) {
+	return astiav.NewRational(151, 241)
+}
+
+func (v *VisionIpcTrack) PixelFormat() (f astiav.PixelFormat) {
+	return astiav.PixelFormatYuv420P
 }
 
 func (v *VisionIpcTrack) Stop() {

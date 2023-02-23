@@ -58,29 +58,52 @@ func ReplaceTrack(prefix string, peerConnection *webrtc.PeerConnection) {
 				log.Println(fmt.Errorf("main: peer connection closed due to error: %w", err))
 			}
 		} else if connectionState.String() == "connected" {
-			astiav.SetLogLevel(astiav.LogLevelDebug)
+			astiav.SetLogLevel(astiav.LogLevelError)
 			astiav.SetLogCallback(func(l astiav.LogLevel, fmt, msg, parent string) {
 				log.Printf("ffmpeg log: %s (level: %d)\n", strings.TrimSpace(msg), l)
 			})
 			go func() {
+				encoderParams := EncoderParams{
+					Width:       visionTrack.Width(),
+					Height:      visionTrack.Height(),
+					TimeBase:    visionTrack.TimeBase(),
+					AspectRatio: visionTrack.AspectRatio(),
+					PixelFormat: visionTrack.PixelFormat(),
+				}
+
+				encoder, err := NewEncoder(encoderParams)
+
+				if err != nil {
+					log.Fatal(fmt.Errorf("main: creating track failed: %w", err))
+					return
+				}
+				defer encoder.Close()
+
 				go visionTrack.Start()
 				defer visionTrack.Stop()
+
 				for visionTrack != nil {
+					var rtpPacket []byte
 					for frame := range visionTrack.Frame {
 						// Do something with decoded frame
 						fmt.Println(frame.Roll)
-
 						// so right now frame is a raw decoded AVFrame
 						// https://github.com/FFmpeg/FFmpeg/blob/n5.0/libavutil/frame.h#L317
-						// avframe := frame.Frame
+						avframe := frame.Frame
 
 						// we need to:
 						// 1. transcode to h264 with adaptive bitrate using astiav
+						outFrame, err := encoder.Encode(avframe)
+						if err != nil {
+							log.Println(fmt.Errorf("encode error: %w", err))
+
+							continue
+						}
 
 						// 2. create an RTP packet with h264 data inside using pion's rtp packetizer
-						var rtpPacket []byte
-						// 3. write the RTP packet to the videoTrack
+						fmt.Println(len(outFrame.Data()))
 
+						// 3. write the RTP packet to the videoTrack
 						if _, err = videoTrack.Write(rtpPacket); err != nil {
 							if errors.Is(err, io.ErrClosedPipe) {
 								// The peerConnection has been closed.
