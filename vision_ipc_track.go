@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"strings"
 	"time"
@@ -10,6 +11,9 @@ import (
 	"github.com/asticode/go-astiav"
 	"github.com/commaai/cereal"
 	zmq "github.com/pebbe/zmq4"
+	"github.com/pion/rtp/v2"
+	"github.com/pion/rtp/v2/codecs"
+	"github.com/pion/webrtc/v3"
 )
 
 const V4L2_BUF_FLAG_KEYFRAME = uint32(8)
@@ -294,5 +298,96 @@ func TestVisionIPCTrack(name string) {
 	for frame := range track.Frame {
 		// Do something with decoded frame
 		fmt.Println(frame.Roll)
+	}
+}
+
+func (v *VisionIpcTrack) NewTrackRTP() (videoTrack *webrtc.TrackLocalStaticRTP, err error) {
+	// Create a video track
+	videoTrack, err = webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{
+		MimeType:  webrtc.MimeTypeH264,
+		ClockRate: 90000,
+	}, "video", "pion")
+	return videoTrack, err
+}
+
+func (visionTrack *VisionIpcTrack) StartRTP(videoTrack *webrtc.TrackLocalStaticRTP) {
+	encoderParams := EncoderParams{
+		Width:       visionTrack.Width(),
+		Height:      visionTrack.Height(),
+		TimeBase:    visionTrack.TimeBase(),
+		AspectRatio: visionTrack.AspectRatio(),
+		PixelFormat: visionTrack.PixelFormat(),
+	}
+
+	encoder, err := NewEncoder(encoderParams)
+
+	if err != nil {
+		log.Fatal(fmt.Errorf("main: creating track failed: %w", err))
+		return
+	}
+	defer encoder.Close()
+
+	go visionTrack.Start()
+	defer visionTrack.Stop()
+
+	// Create a H.264 payloader
+	payloader := &codecs.H264Payloader{}
+
+	// Create a RTP packetizer with some parameters
+	packetizer := rtp.NewPacketizer(
+		1600,
+		96,
+		1,
+		payloader,
+		rtp.NewRandomSequencer(),
+	)
+
+	for visionTrack != nil {
+		for frame := range visionTrack.Frame {
+			fmt.Println(frame.Roll)
+
+			// so right now frame is a raw decoded AVFrame
+			// https://github.com/FFmpeg/FFmpeg/blob/n5.0/libavutil/frame.h#L317
+			avframe := frame.Frame
+
+			// we need to:
+			// 1. transcode to h264 with adaptive bitrate using astiav
+			outFrame, err := encoder.Encode(avframe)
+			if err != nil {
+				log.Println(fmt.Errorf("encode error: %w", err))
+
+				continue
+			}
+
+			// 2. create an RTP packet with h264 data inside using pion's rtp packetizer
+			log.Println(outFrame.Duration())
+			rtpPackets := packetizer.Packetize(outFrame.Data(), uint32(outFrame.Duration()))
+
+			// 3. write the RTP packet to the videoTrack
+			// Loop over the RTP packets and send them to an output stream
+			for rtpPacketNo, rtpPacket := range rtpPackets {
+				// Write the RTP packet to output
+				data, err := rtpPacket.Marshal()
+				if err != nil {
+					log.Println(fmt.Errorf("rtp marshall error: %w", err))
+
+					continue
+				}
+
+				bytesWritten, err := videoTrack.Write(data)
+				if err != nil {
+					if errors.Is(err, io.ErrClosedPipe) {
+						// The peerConnection has been closed.
+						return
+					}
+
+					log.Println(fmt.Errorf("rtp write error: %w", err))
+				}
+
+				log.Printf("RTP(%d:%d)", rtpPacketNo, bytesWritten)
+
+			}
+
+		}
 	}
 }

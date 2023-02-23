@@ -81,8 +81,6 @@ func (ts *Encoder) Encode(f *astiav.Frame) (pkt *astiav.Packet, err error) {
 	// Unref packet
 	s.encPkt.Unref()
 
-	log.Println(len(f.Data()))
-
 	// Send frame
 	if err = s.encCodecContext.SendFrame(f); err != nil {
 		err = fmt.Errorf("encoder: sending frame failed: %w", err)
