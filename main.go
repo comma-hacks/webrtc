@@ -43,7 +43,7 @@ func ReplaceTrack(prefix string, peerConnection *webrtc.PeerConnection) {
 		log.Fatal(fmt.Errorf("main: creating track failed: %w", err))
 	}
 
-	videoTrack, err := visionTrack.NewTrackRTP()
+	videoTrack, err := visionTrack.NewVideoTrack()
 	if err != nil {
 		log.Fatal(fmt.Errorf("main: creating track failed: %w", err))
 	}

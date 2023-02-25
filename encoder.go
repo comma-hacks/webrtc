@@ -25,6 +25,7 @@ type EncoderParams struct {
 	Width       int
 	TimeBase    astiav.Rational
 	AspectRatio astiav.Rational
+	FrameRate   int
 	PixelFormat astiav.PixelFormat
 }
 
@@ -56,6 +57,7 @@ func NewEncoder(params EncoderParams) (ts *Encoder, err error) {
 	s.encCodecContext.SetBitRate(200_000)
 	s.encCodecContext.SetSampleAspectRatio(params.AspectRatio)
 	s.encCodecContext.SetTimeBase(params.TimeBase)
+	s.encCodecContext.SetGopSize(params.FrameRate * 2)
 	s.encCodecContext.SetWidth(params.Width)
 
 	// Update flags

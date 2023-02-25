@@ -5,14 +5,16 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"time"
 
 	"github.com/asticode/go-astiav"
 	"github.com/commaai/cereal"
 	zmq "github.com/pebbe/zmq4"
 	"github.com/pion/rtp"
-	"github.com/pion/rtp/v2/codecs"
 	"github.com/pion/webrtc/v3"
+	"github.com/pion/webrtc/v3/pkg/media"
+	"github.com/pion/webrtc/v3/pkg/media/h264reader"
 )
 
 const V4L2_BUF_FLAG_KEYFRAME = uint32(8)
@@ -24,17 +26,20 @@ type VisionIpcTrackDecoderStream struct {
 }
 
 type VisionIpcTrack struct {
-	name       string
-	stream     *VisionIpcTrackDecoderStream
-	context    *zmq.Context
-	subscriber *zmq.Socket
-	lastIdx    int64
-	seenIframe bool
-	pkt        *astiav.Packet
-	f          *astiav.Frame
-	encoder    *Encoder
-	packetizer rtp.Packetizer
-	videoTrack *webrtc.TrackLocalStaticRTP
+	name           string
+	stream         *VisionIpcTrackDecoderStream
+	context        *zmq.Context
+	subscriber     *zmq.Socket
+	lastIdx        int64
+	seenIframe     bool
+	pkt            *astiav.Packet
+	f              *astiav.Frame
+	encoder        *Encoder
+	packetizer     rtp.Packetizer
+	videoTrack     *webrtc.TrackLocalStaticSample
+	adapter        *Adapter
+	h264           *h264reader.H264Reader
+	spsAndPpsCache []byte
 
 	networkLatency float64
 	frameLatency   float64
@@ -277,9 +282,9 @@ func (v *VisionIpcTrack) Start(OnFrame func(outFrame *Frame)) {
 	}
 }
 
-func (v *VisionIpcTrack) NewTrackRTP() (videoTrack *webrtc.TrackLocalStaticRTP, err error) {
+func (v *VisionIpcTrack) NewVideoTrack() (videoTrack *webrtc.TrackLocalStaticSample, err error) {
 	// Create a video track
-	videoTrack, err = webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{
+	videoTrack, err = webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{
 		MimeType:  webrtc.MimeTypeH264,
 		ClockRate: 90000,
 	}, "video", "pion")
@@ -294,6 +299,7 @@ func (visionTrack *VisionIpcTrack) StartRTP() {
 		TimeBase:    visionTrack.TimeBase(),
 		AspectRatio: visionTrack.AspectRatio(),
 		PixelFormat: visionTrack.PixelFormat(),
+		FrameRate:   visionTrack.FrameRate(),
 	}
 
 	encoder, err := NewEncoder(encoderParams)
@@ -306,18 +312,16 @@ func (visionTrack *VisionIpcTrack) StartRTP() {
 
 	visionTrack.encoder = encoder
 
-	// Create a H.264 payloader
-	payloader := &codecs.H264Payloader{}
+	visionTrack.adapter = NewAdapter()
 
-	// Create a RTP packetizer with some parameters
-	visionTrack.packetizer = rtp.NewPacketizer(
-		1200,
-		0, // Value is handled when writing
-		0, // Value is handled when writing
-		payloader,
-		rtp.NewRandomSequencer(),
-		visionTrack.videoTrack.Codec().ClockRate,
-	)
+	h264, h264Err := h264reader.NewReader(visionTrack.adapter)
+	if h264Err != nil {
+		panic(h264Err)
+	}
+
+	visionTrack.h264 = h264
+
+	visionTrack.spsAndPpsCache = []byte{}
 
 	visionTrack.Start(visionTrack.HandleFrameRTP)
 }
@@ -338,25 +342,28 @@ func (v *VisionIpcTrack) HandleFrameRTP(frame *Frame) {
 		return
 	}
 
-	// 2. create an RTP packet with h264 data inside using pion's rtp packetizer
-	samples := uint32((1.0 / v.encoder.Stream.encCodecContext.TimeBase().ToDouble()) * float64(visionTrack.videoTrack.Codec().ClockRate))
-	rtpPackets := v.packetizer.Packetize(outFrame.Data(), samples)
+	v.adapter.Fill(outFrame.Data())
 
-	// 3. write the RTP packet to the videoTrack
-	// Loop over the RTP packets and send them to an output stream
-	for _, rtpPacket := range rtpPackets {
+	nal, h264Err := v.h264.NextNAL()
+	if h264Err == io.EOF {
+		fmt.Printf("All video frames parsed and sent")
+		os.Exit(0)
+	}
+	if h264Err != nil {
+		panic(h264Err)
+	}
 
-		err = v.videoTrack.WriteRTP(rtpPacket)
-		if err != nil {
-			if errors.Is(err, io.ErrClosedPipe) {
-				// The peerConnection has been closed.
-				return
-			}
+	nal.Data = append([]byte{0x00, 0x00, 0x00, 0x01}, nal.Data...)
 
-			log.Println(fmt.Errorf("rtp write error: %w", err))
-		}
+	if nal.UnitType == h264reader.NalUnitTypeSPS || nal.UnitType == h264reader.NalUnitTypePPS {
+		v.spsAndPpsCache = append(v.spsAndPpsCache, nal.Data...)
+		return
+	} else if nal.UnitType == h264reader.NalUnitTypeCodedSliceIdr {
+		nal.Data = append(v.spsAndPpsCache, nal.Data...)
+		v.spsAndPpsCache = []byte{}
+	}
 
-		// log.Printf("RTP(%d)", rtpPacketNo)
-
+	if h264Err = v.videoTrack.WriteSample(media.Sample{Data: nal.Data, Duration: time.Second}); h264Err != nil {
+		panic(h264Err)
 	}
 }
