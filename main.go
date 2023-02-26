@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
-	"secureput"
+	signaling "secureput"
 
 	"github.com/pion/webrtc/v3"
 )
@@ -11,7 +11,7 @@ import (
 var visionTrack *VisionIpcTrack
 
 func main() {
-	signal := secureput.Create("go-webrtc-body")
+	signal := signaling.Create("go-webrtc-body")
 	signal.DeviceMetadata = map[string]interface{}{"isRobot": true}
 	signal.Gui = &Face{app: &signal}
 	go signal.RunDaemonMode()
@@ -23,11 +23,6 @@ func main() {
 	signal.OnPeerConnectionCreated = func(pc *webrtc.PeerConnection) {
 		ReplaceTrack("road", pc)
 	}
-
-	// visionTrack, _ = NewVisionIpcTrack("roadEncodeData")
-	// _, _ = visionTrack.NewTrackRTP()
-	// visionTrack.StartRTP()
-
 	for {
 		select {}
 	}
@@ -43,15 +38,20 @@ func ReplaceTrack(prefix string, peerConnection *webrtc.PeerConnection) {
 		log.Fatal(fmt.Errorf("main: creating track failed: %w", err))
 	}
 
-	videoTrack, err := visionTrack.NewVideoTrack()
+	rtpSender, err := peerConnection.AddTrack(visionTrack.videoTrack)
 	if err != nil {
 		log.Fatal(fmt.Errorf("main: creating track failed: %w", err))
 	}
 
-	rtpSender, err := peerConnection.AddTrack(videoTrack)
+	_, err = peerConnection.AddTransceiverFromTrack(visionTrack.videoTrack,
+		webrtc.RtpTransceiverInit{
+			Direction: webrtc.RTPTransceiverDirectionSendonly,
+		},
+	)
 	if err != nil {
-		log.Fatal(fmt.Errorf("main: creating track failed: %w", err))
+		log.Fatal(fmt.Errorf("main: creating transceiver failed: %w", err))
 	}
+
 	// Later on, we will use rtpSender.ReplaceTrack() for graceful track replacement
 
 	// Read incoming RTCP packets
@@ -78,7 +78,7 @@ func ReplaceTrack(prefix string, peerConnection *webrtc.PeerConnection) {
 				log.Println(fmt.Errorf("main: peer connection closed due to error: %w", err))
 			}
 		} else if connectionState.String() == "connected" {
-			go visionTrack.StartRTP()
+			go visionTrack.Start()
 		}
 	})
 }
