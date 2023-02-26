@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -13,23 +12,38 @@ import (
 	"github.com/pion/webrtc/v3/pkg/media"
 )
 
-const V4L2_BUF_FLAG_KEYFRAME = uint32(8)
-
-type VisionIpcTrackTranscodeStream struct {
-	decCodecID      astiav.CodecID
-	decCodec        *astiav.Codec
-	decCodecContext *astiav.CodecContext
-	encCodecID      astiav.CodecID
-	encCodec        *astiav.Codec
-	encCodecContext *astiav.CodecContext
-	decPkt          *astiav.Packet
-	decFrame        *astiav.Frame
-	encPkt          *astiav.Packet
+type VisionIpcCamera struct {
+	prefix        string
+	getEncodeData func(s cereal.Event) (cereal.EncodeData, error)
 }
 
+var (
+	ROAD = VisionIpcCamera{prefix: "road",
+		getEncodeData: func(s cereal.Event) (cereal.EncodeData, error) {
+			return s.RoadEncodeData()
+		},
+	}
+	WIDE_ROAD = VisionIpcCamera{prefix: "wideRoad",
+		getEncodeData: func(s cereal.Event) (cereal.EncodeData, error) {
+			return s.WideRoadEncodeData()
+		},
+	}
+	DRIVER = VisionIpcCamera{prefix: "driver",
+		getEncodeData: func(s cereal.Event) (cereal.EncodeData, error) {
+			return s.DriverEncodeData()
+		},
+	}
+)
+
+var VisionIpcCameras = []VisionIpcCamera{ROAD, WIDE_ROAD, DRIVER}
+
+const V4L2_BUF_FLAG_KEYFRAME = uint32(8)
+
 type VisionIpcTrack struct {
+	cam        VisionIpcCamera
 	name       string
-	stream     *VisionIpcTrackTranscodeStream
+	stream     *VIPCTranscoderStream
+	transcoder *VIPCTranscoder
 	context    *zmq.Context
 	subscriber *zmq.Socket
 	lastIdx    int64
@@ -48,6 +62,9 @@ type VisionIpcTrack struct {
 	logMonoTime  uint64
 	timestampEof uint64
 	dataSize     int
+
+	counter  int64
+	duration time.Duration
 }
 
 type Frame struct {
@@ -57,119 +74,12 @@ type Frame struct {
 
 var Open = false
 
-func NewVisionIpcTrack(name string) (track *VisionIpcTrack, err error) {
-	// Create a new context
-	context, err := zmq.NewContext()
-	if err != nil {
-		log.Fatal(fmt.Errorf("vision_ipc_track: new zmq context failed: %w", err))
-		return nil, err
-	}
-
-	// Connect to the socket
-	subscriber, err := context.NewSocket(zmq.SUB)
-	if err != nil {
-		log.Fatal(fmt.Errorf("vision_ipc_track: new zmq socket failed: %w", err))
-		return nil, err
-	}
-	subscriber.SetSubscribe("")
-	subscriber.Connect(GetServiceURI(name))
-
-	// Create stream
-	s := &VisionIpcTrackTranscodeStream{}
-
-	s.decCodecID = astiav.CodecIDHevc
-
-	// Find decoder
-	if s.decCodec = astiav.FindDecoder(s.decCodecID); s.decCodec == nil {
-		return nil, errors.New("vision_ipc_track: codec is nil")
-	}
-
-	// Alloc codec context
-	if s.decCodecContext = astiav.AllocCodecContext(s.decCodec); s.decCodecContext == nil {
-		return nil, errors.New("vision_ipc_track: codec context is nil")
-	}
-
-	s.decCodecContext.SetHeight(track.Height())
-	s.decCodecContext.SetPixelFormat(track.PixelFormat())
-	s.decCodecContext.SetSampleAspectRatio(track.AspectRatio())
-	s.decCodecContext.SetTimeBase(track.TimeBase())
-	s.decCodecContext.SetWidth(track.Width())
-
-	// Open codec context
-	if err := s.decCodecContext.Open(s.decCodec, nil); err != nil {
-		log.Fatal(fmt.Errorf("vision_ipc_track: opening codec context failed: %w", err))
-		return nil, err
-	}
-
-	// Alloc packet
-	s.decPkt = astiav.AllocPacket()
-
-	// Alloc frame
-	s.decFrame = astiav.AllocFrame()
-
-	//=========
-	// ENCODER
-	//=========
-
-	// Get codec id
-	s.encCodecID = astiav.CodecIDH264
-
-	// Find encoder
-	if s.encCodec = astiav.FindEncoder(s.encCodecID); s.encCodec == nil {
-		err = errors.New("vision_ipc_track: codec is nil")
-		return
-	}
-
-	// Alloc codec context
-	if s.encCodecContext = astiav.AllocCodecContext(s.encCodec); s.encCodecContext == nil {
-		err = errors.New("main: codec context is nil")
-		return
-	}
-
-	s.encCodecContext.SetHeight(s.decCodecContext.Height())
-	s.encCodecContext.SetFramerate(s.decCodecContext.Framerate())
-	s.encCodecContext.SetPixelFormat(s.decCodecContext.PixelFormat())
-	s.encCodecContext.SetBitRate(500_000)
-	// s.encCodecContext.SetGopSize(0)
-	s.encCodecContext.SetSampleAspectRatio(s.decCodecContext.SampleAspectRatio())
-	s.encCodecContext.SetTimeBase(s.decCodecContext.TimeBase())
-	s.encCodecContext.SetWidth(s.decCodecContext.Width())
-	s.encCodecContext.SetStrictStdCompliance(astiav.StrictStdComplianceExperimental)
-
-	// Update flags
-	flags := s.encCodecContext.Flags()
-	flags = flags.Add(astiav.CodecContextFlagLowDelay)
-	s.encCodecContext.SetFlags(flags)
-
-	// TOOD possibly PR to go-astiav with this SetOpt function
-	// av_opt_set(mCodecContext->priv_data, "preset", "ultrafast", 0);
-	// av_opt_set(mCodecContext->priv_data, "tune", "zerolatency", 0);
-	s.encCodecContext.SetOpt("preset", "ultrafast", 0)
-	s.encCodecContext.SetOpt("tune", "zerolatency", 0)
-	// from https://trac.ffmpeg.org/ticket/3354
-	// interesting: https://github.com/giorgisio/goav/blob/master/avcodec/context.go#L190
-
-	// Open codec context
-	if err = s.encCodecContext.Open(s.encCodec, nil); err != nil {
-		err = fmt.Errorf("encoder: opening codec context failed: %w", err)
-		return
-	}
-
-	// Allocate packet
-	s.encPkt = astiav.AllocPacket()
-
-	videoTrack, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{
-		MimeType: webrtc.MimeTypeH264,
-	}, "video", "pion")
-	if err != nil {
-		log.Fatal(fmt.Errorf("vision_ipc_track: creating track failed: %w", err))
-	}
-
-	return &VisionIpcTrack{
-		name:           name,
-		stream:         s,
-		context:        context,
-		subscriber:     subscriber,
+func NewVisionIpcTrack(cam VisionIpcCamera, transcoder VIPCTranscoder) (v *VisionIpcTrack, err error) {
+	v = &VisionIpcTrack{
+		cam:            cam,
+		name:           cam.prefix + "EncodeData",
+		stream:         &VIPCTranscoderStream{},
+		transcoder:     &transcoder,
 		lastIdx:        -1,
 		seenIframe:     false,
 		networkLatency: 0.0,
@@ -177,39 +87,68 @@ func NewVisionIpcTrack(name string) (track *VisionIpcTrack, err error) {
 		processLatency: 0.0,
 		pcLatency:      0.0,
 		timeQ:          []int64{},
+		msgCount:       0,
+		encodeId:       0,
+		logMonoTime:    0,
+		timestampEof:   0,
+		dataSize:       0,
+		counter:        0,
+		duration:       50 * time.Millisecond,
+	}
 
-		videoTrack: videoTrack,
+	v.context, err = zmq.NewContext()
+	if err != nil {
+		log.Fatal(fmt.Errorf("main: new zmq context failed: %w", err))
+	}
 
-		msgCount:     0,
-		encodeId:     0,
-		logMonoTime:  0,
-		timestampEof: 0,
-		dataSize:     0,
-	}, nil
+	// Alloc packet
+	v.stream.decPkt = astiav.AllocPacket()
+
+	// Alloc frame
+	v.stream.decFrame = astiav.AllocFrame()
+
+	// Allocate packet
+	v.stream.encPkt = astiav.AllocPacket()
+
+	v.videoTrack, err = webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{
+		MimeType: webrtc.MimeTypeH264,
+	}, "video", "pion")
+	if err != nil {
+		log.Fatal(fmt.Errorf("vision_ipc_track: creating track failed: %w", err))
+	}
+
+	v.subscriber, err = v.newSocket()
+	if err != nil {
+		log.Fatal(fmt.Errorf("main: zmq connect failed: %w", err))
+	}
+
+	return v, nil
 }
 
-func (v *VisionIpcTrack) TimeBase() (t astiav.Rational) {
-	return astiav.NewRational(1, v.FrameRate())
+func (v *VisionIpcTrack) newSocket() (socket *zmq.Socket, err error) {
+	socket, err = v.context.NewSocket(zmq.SUB)
+	if err != nil {
+		return nil, err
+	}
+	err = socket.Connect(GetServiceURI(v.name))
+	if err != nil {
+		return nil, err
+	}
+	return socket, nil
 }
 
-func (v *VisionIpcTrack) FrameRate() int {
-	return 20
+func (v *VisionIpcTrack) Subscribe() (err error) {
+	return v.subscriber.SetSubscribe("")
 }
 
-func (v *VisionIpcTrack) Height() int {
-	return 1208
-}
-
-func (v *VisionIpcTrack) Width() int {
-	return 1928
-}
-
-func (v *VisionIpcTrack) AspectRatio() (t astiav.Rational) {
-	return astiav.NewRational(151, 241)
-}
-
-func (v *VisionIpcTrack) PixelFormat() (f astiav.PixelFormat) {
-	return astiav.PixelFormatYuv420P
+func (v *VisionIpcTrack) Unsubscribe() (err error) {
+	newSub, err := v.newSocket()
+	if err != nil {
+		return err
+	}
+	oldSub := v.subscriber
+	v.subscriber = newSub
+	return oldSub.Close()
 }
 
 func (v *VisionIpcTrack) Stop() {
@@ -220,184 +159,156 @@ func (v *VisionIpcTrack) Stop() {
 	v.stream.decFrame.Free()
 	v.stream.encPkt.Free()
 	v.stream.decPkt.Free()
-	v.stream.encCodecContext.Free()
-	v.stream.decCodecContext.Free()
 	v.subscriber.Close()
 	v.context.Term()
 }
 
-func (v *VisionIpcTrack) Start() {
-	if Open {
+func (v *VisionIpcTrack) ProcessCerealEvent(evt cereal.Event) {
+	v.stream.encPkt.Unref()
+	v.stream.decPkt.Unref()
+	v.stream.decFrame.Unref()
+
+	pts := int64(v.counter * 50) // 50ms per frame
+
+	encodeData, err := v.cam.getEncodeData(evt)
+	if err != nil {
+		log.Println(fmt.Errorf("cereal read road encode data failed: %w", err))
 		return
 	}
 
-	// adapter := NewAdapter()
-
-	// h264, h264Err := h264reader.NewReader(adapter)
-	// if h264Err != nil {
-	// 	panic(h264Err)
-	// }
-
-	counter := 0
-
-	duration := 50 * time.Millisecond
-
-	Open = true
-	for Open {
-		msgs := DrainSock(v.subscriber, false)
-		v.msgCount = len(msgs)
-		if v.msgCount > 0 {
-			for _, msg := range msgs {
-
-				v.stream.encPkt.Unref()
-				v.stream.decPkt.Unref()
-				v.stream.decFrame.Unref()
-
-				pts := int64(counter * 50) // 50ms per frame
-
-				evt, err := cereal.ReadRootEvent(msg)
-				if err != nil {
-					log.Println(fmt.Errorf("cereal read root event failed: %w", err))
-					continue
-				}
-
-				encodeData, err := evt.RoadEncodeData()
-				if err != nil {
-					log.Println(fmt.Errorf("cereal read road encode data failed: %w", err))
-					continue
-				}
-
-				encodeIndex, err := encodeData.Idx()
-				if err != nil {
-					log.Println(fmt.Errorf("cereal read encode index failed: %w", err))
-					continue
-				}
-
-				v.encodeId = encodeIndex.EncodeId()
-
-				idxFlags := encodeIndex.Flags()
-
-				if v.encodeId != 0 && v.encodeId != uint32(v.lastIdx+1) {
-					fmt.Println("DROP PACKET!")
-				}
-
-				v.lastIdx = int64(v.encodeId)
-
-				if !v.seenIframe && (idxFlags&V4L2_BUF_FLAG_KEYFRAME) == 0 {
-					fmt.Println("waiting for iframe")
-					continue
-				}
-				v.timeQ = append(v.timeQ, (time.Now().UnixNano() / 1e6))
-
-				v.timestampEof = encodeIndex.TimestampEof()
-				timestampSof := encodeIndex.TimestampSof()
-
-				v.logMonoTime = evt.LogMonoTime()
-
-				ts := int64(encodeData.UnixTimestampNanos())
-				v.networkLatency = float64(time.Now().UnixNano()-ts) / 1e6
-
-				v.frameLatency = ((float64(v.timestampEof) / 1e9) - (float64(timestampSof) / 1e9)) * 1000
-				v.processLatency = ((float64(v.logMonoTime) / 1e9) - (float64(v.timestampEof) / 1e9)) * 1000
-
-				if !v.seenIframe {
-					// Decode video frame
-
-					// AvPacketFromData
-					header, err := encodeData.Header()
-					if err != nil {
-						log.Println(fmt.Errorf("cereal read encode header failed: %w", err))
-						continue
-					}
-
-					if err := v.stream.decPkt.FromData(header); err != nil {
-						log.Println(fmt.Errorf("vision_ipc_track: packet header load failed: %w", err))
-						continue
-					}
-
-					// Send packet
-					if err := v.stream.decCodecContext.SendPacket(v.stream.decPkt); err != nil {
-						log.Println(fmt.Errorf("vision_ipc_track: sending packet failed: %w", err))
-						continue
-					}
-
-					v.seenIframe = true
-				}
-
-				// AvPacketFromData
-				data, err := encodeData.Data()
-				if err != nil {
-					log.Println(fmt.Errorf("cereal read encode data failed: %w", err))
-					continue
-				}
-				v.dataSize = len(data)
-
-				v.stream.decPkt.SetPts(pts)
-
-				if err := v.stream.decPkt.FromData(data); err != nil {
-					log.Println(fmt.Errorf("vision_ipc_track decoder: packet data load failed: %w", err))
-					continue
-				}
-
-				// Send packet
-				if err := v.stream.decCodecContext.SendPacket(v.stream.decPkt); err != nil {
-					log.Println(fmt.Errorf("vision_ipc_track decoder: sending packet failed: %w", err))
-					continue
-				}
-
-				if err := v.stream.decCodecContext.ReceiveFrame(v.stream.decFrame); err != nil {
-					log.Println(fmt.Errorf("vision_ipc_track decoder: receiving frame failed: %w", err))
-					continue
-				}
-
-				v.pcLatency = ((float64(time.Now().UnixNano()) / 1e6) - float64(v.timeQ[0]))
-				v.timeQ = v.timeQ[1:]
-
-				// Send frame
-				if err = v.stream.encCodecContext.SendFrame(v.stream.decFrame); err != nil {
-					log.Println(fmt.Errorf("vision_ipc_track encoder: sending frame failed: %w", err))
-					continue
-				}
-
-				if err := v.stream.encCodecContext.ReceivePacket(v.stream.encPkt); err != nil {
-					if astiav.ErrEagain.Is(err) {
-						// Encoder might need a few frames on startup to get started. Keep going
-					} else {
-						log.Println(fmt.Errorf("vision_ipc_track encoder: receiving frame failed: %w", err))
-					}
-					continue
-				}
-
-				if err != nil {
-					log.Println(fmt.Errorf("vision_ipc_track: encode error: %w", err))
-					continue
-				}
-
-				if err = v.videoTrack.WriteSample(media.Sample{Data: v.stream.encPkt.Data(), Duration: duration}); err != nil {
-					log.Println(fmt.Errorf("vision_ipc_track: sample write error: %w", err))
-					continue
-				}
-
-				counter++
-
-				v.PrintStats()
-			}
-		}
+	encodeIndex, err := encodeData.Idx()
+	if err != nil {
+		log.Println(fmt.Errorf("cereal read encode index failed: %w", err))
+		return
 	}
+
+	v.encodeId = encodeIndex.EncodeId()
+
+	idxFlags := encodeIndex.Flags()
+
+	if v.encodeId != 0 && v.encodeId != uint32(v.lastIdx+1) {
+		fmt.Println("DROP PACKET!")
+	}
+
+	v.lastIdx = int64(v.encodeId)
+
+	if !v.seenIframe && (idxFlags&V4L2_BUF_FLAG_KEYFRAME) == 0 {
+		fmt.Println("waiting for iframe")
+		return
+	}
+	v.timeQ = append(v.timeQ, (time.Now().UnixNano() / 1e6))
+
+	v.timestampEof = encodeIndex.TimestampEof()
+	timestampSof := encodeIndex.TimestampSof()
+	v.logMonoTime = evt.LogMonoTime()
+
+	ts := int64(encodeData.UnixTimestampNanos())
+	v.networkLatency = float64(time.Now().UnixNano()-ts) / 1e6
+	v.frameLatency = ((float64(v.timestampEof) / 1e9) - (float64(timestampSof) / 1e9)) * 1000
+	v.processLatency = ((float64(v.logMonoTime) / 1e9) - (float64(v.timestampEof) / 1e9)) * 1000
+
+	if !v.seenIframe {
+		header, err := encodeData.Header()
+		if err != nil {
+			log.Println(fmt.Errorf("cereal read encode header failed: %w", err))
+			return
+		}
+
+		if err := v.stream.decPkt.FromData(header); err != nil {
+			log.Println(fmt.Errorf("vision_ipc_track: packet header load failed: %w", err))
+			return
+		}
+
+		if err := v.transcoder.decoder.decCodecContext.SendPacket(v.stream.decPkt); err != nil {
+			log.Println(fmt.Errorf("vision_ipc_track: sending packet failed: %w", err))
+			return
+		}
+
+		v.seenIframe = true
+	}
+
+	data, err := encodeData.Data()
+	if err != nil {
+		log.Println(fmt.Errorf("cereal read encode data failed: %w", err))
+		return
+	}
+	v.dataSize = len(data)
+
+	v.stream.decPkt.SetPts(pts)
+
+	if err := v.stream.decPkt.FromData(data); err != nil {
+		log.Println(fmt.Errorf("vision_ipc_track decoder: packet data load failed: %w", err))
+		return
+	}
+
+	if err := v.transcoder.decoder.decCodecContext.SendPacket(v.stream.decPkt); err != nil {
+		log.Println(fmt.Errorf("vision_ipc_track decoder: sending packet failed: %w", err))
+		return
+	}
+
+	if err := v.transcoder.decoder.decCodecContext.ReceiveFrame(v.stream.decFrame); err != nil {
+		log.Println(fmt.Errorf("vision_ipc_track decoder: receiving frame failed: %w", err))
+		return
+	}
+
+	if err = v.transcoder.encoder.encCodecContext.SendFrame(v.stream.decFrame); err != nil {
+		log.Println(fmt.Errorf("vision_ipc_track encoder: sending frame failed: %w", err))
+		return
+	}
+
+	if err := v.transcoder.encoder.encCodecContext.ReceivePacket(v.stream.encPkt); err != nil {
+		if astiav.ErrEagain.Is(err) {
+			// Encoder might need a few frames on startup to get started. Keep going
+		} else {
+			log.Println(fmt.Errorf("vision_ipc_track encoder: receiving frame failed: %w", err))
+		}
+		return
+	}
+
+	if err != nil {
+		log.Println(fmt.Errorf("vision_ipc_track: encode error: %w", err))
+		return
+	}
+
+	if err = v.videoTrack.WriteSample(media.Sample{Data: v.stream.encPkt.Data(), Duration: v.duration}); err != nil {
+		log.Println(fmt.Errorf("vision_ipc_track: sample write error: %w", err))
+		return
+	}
+
+	v.counter++
+
+	v.pcLatency = ((float64(time.Now().UnixNano()) / 1e6) - float64(v.timeQ[0]))
+	v.timeQ = v.timeQ[1:]
 }
 
-func (v *VisionIpcTrack) PrintStats() {
-	fmt.Printf("%2d %4d %.3f %.3f roll %6.2f ms latency %6.2f ms + %6.2f ms + %6.2f ms = %6.2f ms %d %s\n",
-		v.msgCount,
-		v.encodeId,
-		(float64(v.logMonoTime) / 1e9),
-		(float64(v.timestampEof) / 1e6),
-		v.frameLatency,
-		v.processLatency,
-		v.networkLatency,
-		v.pcLatency,
-		v.processLatency+v.networkLatency+v.pcLatency,
-		v.dataSize,
-		v.name,
+func (v *VisionIpcTrack) AddTrack(peerConnection *webrtc.PeerConnection) *webrtc.RTPSender {
+	rtpSender, err := peerConnection.AddTrack(v.videoTrack)
+	if err != nil {
+		log.Fatal(fmt.Errorf("main: creating track failed: %w", err))
+	}
+
+	_, err = peerConnection.AddTransceiverFromTrack(v.videoTrack,
+		webrtc.RtpTransceiverInit{
+			Direction: webrtc.RTPTransceiverDirectionSendonly,
+		},
 	)
+	if err != nil {
+		log.Fatal(fmt.Errorf("main: creating transceiver failed: %w", err))
+	}
+
+	// Later on, we will use rtpSender.ReplaceTrack() for graceful track replacement
+
+	// Read incoming RTCP packets
+	// Before these packets are returned they are processed by interceptors. For things
+	// like NACK this needs to be called.
+	go func() {
+		rtcpBuf := make([]byte, 1500)
+		for {
+			if _, _, rtcpErr := rtpSender.Read(rtcpBuf); rtcpErr != nil {
+				return
+			}
+		}
+	}()
+
+	return rtpSender
 }

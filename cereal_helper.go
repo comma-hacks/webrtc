@@ -26,7 +26,7 @@ func GetServicePort(name string) int {
 
 func DrainSock(socket *zmq.Socket, waitForOne bool) []*capnp.Message {
 	var ret []*capnp.Message
-	for {
+	for socket != nil {
 		var dat []byte
 		var err error
 		if waitForOne && len(ret) == 0 {
