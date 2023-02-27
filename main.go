@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"log"
 	signaling "secureput"
+	"strings"
 
+	"github.com/asticode/go-astiav"
 	"github.com/pion/webrtc/v3"
 )
 
@@ -15,6 +17,7 @@ var wantCamIndex int
 var activeVipc *VisionIpcTrack
 var activeRtpSender *webrtc.RTPSender
 var tracks TrackMap
+var err error
 
 var Streaming chan *VisionIpcTrack
 
@@ -48,13 +51,13 @@ func main() {
 	}
 
 	signal.OnPeerConnectionCreated = func(pc *webrtc.PeerConnection) {
-		transceiver, err := pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RtpTransceiverInit{
-			Direction: webrtc.RTPTransceiverDirectionSendonly,
-		})
-		if err != nil {
-			log.Fatal(fmt.Errorf("main: creating transceiver failed: %w", err))
-		}
-		activeRtpSender = transceiver.Sender()
+		// transceiver, err := pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RtpTransceiverInit{
+		// 	Direction: webrtc.RTPTransceiverDirectionSendonly,
+		// })
+		// if err != nil {
+		// 	log.Fatal(fmt.Errorf("main: creating transceiver failed: %w", err))
+		// }
+		// activeRtpSender = transceiver.Sender()
 
 		// Set the handler for ICE connection state
 		// This will notify you when the peer has connected/disconnected
@@ -70,10 +73,27 @@ func main() {
 			} else if connectionState.String() == "connected" {
 				ActivateStream(0)
 
+				// transceiver, err := pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RtpTransceiverInit{
+				// 	Direction: webrtc.RTPTransceiverDirectionSendonly,
+				// })
+				// if err != nil {
+				// 	log.Fatal(fmt.Errorf("main: creating transceiver failed: %w", err))
+				// }
+				// activeRtpSender = transceiver.Sender()
+
 				activeRtpSender, err = pc.AddTrack(activeVipc.videoTrack)
 				if err != nil {
 					log.Fatal(fmt.Errorf("main: creating track failed: %w", err))
 				}
+
+				_, err := pc.AddTransceiverFromTrack(activeVipc.videoTrack, webrtc.RtpTransceiverInit{
+					Direction: webrtc.RTPTransceiverDirectionSendonly,
+				})
+				if err != nil {
+					log.Fatal(fmt.Errorf("main: creating transceiver failed: %w", err))
+				}
+				// activeRtpSender = transceiver.Sender()
+				// activeRtpSender = transceiver.Sender()
 
 				// Later on, we will use rtpSender.ReplaceTrack() for graceful track replacement
 
@@ -108,58 +128,48 @@ func main() {
 
 	tracks = TrackMap{}
 
-	decoder, err := NewHEVCDecoder()
+	decoder, err := NewVipcDecoder()
 	if err != nil {
 		log.Fatalln(err)
 	}
-	defer decoder.Close()
+	defer decoder.Free()
 
-	encoder, err := NewH264Encoder()
+	encoder, err := NewVipcEncoder(decoder)
 	if err != nil {
 		log.Fatalln(err)
 	}
-	defer encoder.Close()
-
-	transcoder, err := NewVIPCTranscoder(decoder, encoder)
-	if err != nil {
-		log.Fatal(fmt.Errorf("main: new transcoder failed: %w", err))
-	}
+	defer encoder.Free()
 
 	for i, c := range VisionIpcCameras {
-		visionTrack, err := NewVisionIpcTrack(c, *transcoder)
+
+		visionTrack, err := NewVisionIpcTrack(c, decoder, encoder)
 		if err != nil {
 			log.Fatal(fmt.Errorf("main: creating track failed: %w", err))
 		}
+
 		tracks[i] = visionTrack
 	}
 
-	// go ActivateStream(0)
+	go ActivateStream(0)
+
+	// Handle ffmpeg logs
+	astiav.SetLogLevel(astiav.LogLevelError)
+	astiav.SetLogCallback(func(l astiav.LogLevel, fmt, msg, parent string) {
+		log.Printf("ffmpeg log: %s (level: %d)\n", strings.TrimSpace(msg), l)
+	})
 
 	for {
 		log.Println("waitng for streaming sig")
 		v := <-Streaming
 		for camIndex == wantCamIndex {
-			msgCount, err := v.Drain()
+			sent, err := v.Drain()
 			if err != nil {
 				log.Println(fmt.Errorf("main: vipc error: %w", err))
 				continue
 			}
-			if msgCount < 1 {
+			if sent < 1 {
 				continue
 			}
-			fmt.Printf("%2d %4d %.3f %.3f roll %6.2f ms latency %6.2f ms + %6.2f ms + %6.2f ms = %6.2f ms %d %s\n",
-				msgCount,
-				v.encodeId,
-				(float64(v.logMonoTime) / 1e9),
-				(float64(v.timestampEof) / 1e6),
-				v.frameLatency,
-				v.processLatency,
-				v.networkLatency,
-				v.pcLatency,
-				v.processLatency+v.networkLatency+v.pcLatency,
-				v.dataSize,
-				v.name,
-			)
 		}
 	}
 }
