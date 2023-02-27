@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -13,26 +14,13 @@ import (
 )
 
 type VisionIpcCamera struct {
-	prefix        string
-	getEncodeData func(s cereal.Event) (cereal.EncodeData, error)
+	prefix string
 }
 
 var (
-	ROAD = VisionIpcCamera{prefix: "road",
-		getEncodeData: func(s cereal.Event) (cereal.EncodeData, error) {
-			return s.RoadEncodeData()
-		},
-	}
-	WIDE_ROAD = VisionIpcCamera{prefix: "wideRoad",
-		getEncodeData: func(s cereal.Event) (cereal.EncodeData, error) {
-			return s.WideRoadEncodeData()
-		},
-	}
-	DRIVER = VisionIpcCamera{prefix: "driver",
-		getEncodeData: func(s cereal.Event) (cereal.EncodeData, error) {
-			return s.DriverEncodeData()
-		},
-	}
+	ROAD      = VisionIpcCamera{prefix: "road"}
+	WIDE_ROAD = VisionIpcCamera{prefix: "wideRoad"}
+	DRIVER    = VisionIpcCamera{prefix: "driver"}
 )
 
 var VisionIpcCameras = []VisionIpcCamera{ROAD, WIDE_ROAD, DRIVER}
@@ -76,9 +64,13 @@ var Open = false
 
 func NewVisionIpcTrack(cam VisionIpcCamera, transcoder VIPCTranscoder) (v *VisionIpcTrack, err error) {
 	v = &VisionIpcTrack{
-		cam:            cam,
-		name:           cam.prefix + "EncodeData",
-		stream:         &VIPCTranscoderStream{},
+		cam:  cam,
+		name: cam.prefix + "EncodeData",
+		stream: &VIPCTranscoderStream{
+			decPkt:   astiav.AllocPacket(),
+			encPkt:   astiav.AllocPacket(),
+			decFrame: astiav.AllocFrame(),
+		},
 		transcoder:     &transcoder,
 		lastIdx:        -1,
 		seenIframe:     false,
@@ -100,15 +92,6 @@ func NewVisionIpcTrack(cam VisionIpcCamera, transcoder VIPCTranscoder) (v *Visio
 	if err != nil {
 		log.Fatal(fmt.Errorf("main: new zmq context failed: %w", err))
 	}
-
-	// Alloc packet
-	v.stream.decPkt = astiav.AllocPacket()
-
-	// Alloc frame
-	v.stream.decFrame = astiav.AllocFrame()
-
-	// Allocate packet
-	v.stream.encPkt = astiav.AllocPacket()
 
 	v.videoTrack, err = webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{
 		MimeType: webrtc.MimeTypeH264,
@@ -163,152 +146,124 @@ func (v *VisionIpcTrack) Stop() {
 	v.context.Term()
 }
 
-func (v *VisionIpcTrack) ProcessCerealEvent(evt cereal.Event) {
-	v.stream.encPkt.Unref()
-	v.stream.decPkt.Unref()
-	v.stream.decFrame.Unref()
+func (v *VisionIpcTrack) Drain() (msgCount int, err error) {
+	msgs := DrainSock(v.subscriber, false)
+	v.msgCount = len(msgs)
+	if v.msgCount > 0 {
+		for _, msg := range msgs {
+			evt, err := cereal.ReadRootEvent(msg)
+			if err != nil {
+				return v.msgCount, fmt.Errorf("cereal read root event failed: %w", err)
+			}
 
-	pts := int64(v.counter * 50) // 50ms per frame
+			var encodeData cereal.EncodeData
+			switch v.cam {
+			case ROAD:
+				encodeData, err = evt.RoadEncodeData()
+			case WIDE_ROAD:
+				encodeData, err = evt.WideRoadEncodeData()
+			case DRIVER:
+				encodeData, err = evt.DriverEncodeData()
+			}
 
-	encodeData, err := v.cam.getEncodeData(evt)
-	if err != nil {
-		log.Println(fmt.Errorf("cereal read road encode data failed: %w", err))
-		return
-	}
+			if err != nil {
+				return v.msgCount, fmt.Errorf("cereal get encode data failed: %w", err)
+			}
 
-	encodeIndex, err := encodeData.Idx()
-	if err != nil {
-		log.Println(fmt.Errorf("cereal read encode index failed: %w", err))
-		return
-	}
+			v.stream.encPkt.Unref()
+			v.stream.decPkt.Unref()
+			v.stream.decFrame.Unref()
 
-	v.encodeId = encodeIndex.EncodeId()
+			pts := int64(v.counter * 50) // 50ms per frame
 
-	idxFlags := encodeIndex.Flags()
+			encodeIndex, err := encodeData.Idx()
+			if err != nil {
+				return v.msgCount, fmt.Errorf("cereal read encode index failed: %w", err)
+			}
+			v.encodeId = encodeIndex.EncodeId()
 
-	if v.encodeId != 0 && v.encodeId != uint32(v.lastIdx+1) {
-		fmt.Println("DROP PACKET!")
-	}
+			idxFlags := encodeIndex.Flags()
 
-	v.lastIdx = int64(v.encodeId)
+			if v.encodeId != 0 && v.encodeId != uint32(v.lastIdx+1) {
+				v.lastIdx = int64(v.encodeId)
+				return v.msgCount, errors.New("drop packet")
+			}
 
-	if !v.seenIframe && (idxFlags&V4L2_BUF_FLAG_KEYFRAME) == 0 {
-		fmt.Println("waiting for iframe")
-		return
-	}
-	v.timeQ = append(v.timeQ, (time.Now().UnixNano() / 1e6))
+			v.lastIdx = int64(v.encodeId)
 
-	v.timestampEof = encodeIndex.TimestampEof()
-	timestampSof := encodeIndex.TimestampSof()
-	v.logMonoTime = evt.LogMonoTime()
+			if !v.seenIframe && (idxFlags&V4L2_BUF_FLAG_KEYFRAME) == 0 {
+				return v.msgCount, errors.New("waiting for iframe")
+			}
 
-	ts := int64(encodeData.UnixTimestampNanos())
-	v.networkLatency = float64(time.Now().UnixNano()-ts) / 1e6
-	v.frameLatency = ((float64(v.timestampEof) / 1e9) - (float64(timestampSof) / 1e9)) * 1000
-	v.processLatency = ((float64(v.logMonoTime) / 1e9) - (float64(v.timestampEof) / 1e9)) * 1000
+			v.timeQ = append(v.timeQ, (time.Now().UnixNano() / 1e6))
 
-	if !v.seenIframe {
-		header, err := encodeData.Header()
-		if err != nil {
-			log.Println(fmt.Errorf("cereal read encode header failed: %w", err))
-			return
-		}
+			v.timestampEof = encodeIndex.TimestampEof()
+			timestampSof := encodeIndex.TimestampSof()
+			v.logMonoTime = evt.LogMonoTime()
 
-		if err := v.stream.decPkt.FromData(header); err != nil {
-			log.Println(fmt.Errorf("vision_ipc_track: packet header load failed: %w", err))
-			return
-		}
+			ts := int64(encodeData.UnixTimestampNanos())
+			v.networkLatency = float64(time.Now().UnixNano()-ts) / 1e6
+			v.frameLatency = ((float64(v.timestampEof) / 1e9) - (float64(timestampSof) / 1e9)) * 1000
+			v.processLatency = ((float64(v.logMonoTime) / 1e9) - (float64(v.timestampEof) / 1e9)) * 1000
 
-		if err := v.transcoder.decoder.decCodecContext.SendPacket(v.stream.decPkt); err != nil {
-			log.Println(fmt.Errorf("vision_ipc_track: sending packet failed: %w", err))
-			return
-		}
+			if !v.seenIframe {
+				header, err := encodeData.Header()
+				if err != nil {
+					return v.msgCount, fmt.Errorf("cereal read encode header failed: %w", err)
+				}
 
-		v.seenIframe = true
-	}
+				if err := v.stream.decPkt.FromData(header); err != nil {
+					return v.msgCount, fmt.Errorf("vision_ipc_track: packet header load failed: %w", err)
+				}
 
-	data, err := encodeData.Data()
-	if err != nil {
-		log.Println(fmt.Errorf("cereal read encode data failed: %w", err))
-		return
-	}
-	v.dataSize = len(data)
+				if err := v.transcoder.decoder.decCodecContext.SendPacket(v.stream.decPkt); err != nil {
+					return v.msgCount, fmt.Errorf("vision_ipc_track: sending packet failed: %w", err)
+				}
 
-	v.stream.decPkt.SetPts(pts)
+				v.seenIframe = true
+			}
 
-	if err := v.stream.decPkt.FromData(data); err != nil {
-		log.Println(fmt.Errorf("vision_ipc_track decoder: packet data load failed: %w", err))
-		return
-	}
+			data, err := encodeData.Data()
+			if err != nil {
+				return v.msgCount, fmt.Errorf("cereal read encode data failed: %w", err)
+			}
+			v.dataSize = len(data)
 
-	if err := v.transcoder.decoder.decCodecContext.SendPacket(v.stream.decPkt); err != nil {
-		log.Println(fmt.Errorf("vision_ipc_track decoder: sending packet failed: %w", err))
-		return
-	}
+			v.stream.decPkt.SetPts(pts)
 
-	if err := v.transcoder.decoder.decCodecContext.ReceiveFrame(v.stream.decFrame); err != nil {
-		log.Println(fmt.Errorf("vision_ipc_track decoder: receiving frame failed: %w", err))
-		return
-	}
+			if err := v.stream.decPkt.FromData(data); err != nil {
+				return v.msgCount, fmt.Errorf("vision_ipc_track decoder: packet data load failed: %w", err)
+			}
 
-	if err = v.transcoder.encoder.encCodecContext.SendFrame(v.stream.decFrame); err != nil {
-		log.Println(fmt.Errorf("vision_ipc_track encoder: sending frame failed: %w", err))
-		return
-	}
+			if err := v.transcoder.decoder.decCodecContext.SendPacket(v.stream.decPkt); err != nil {
+				return v.msgCount, fmt.Errorf("vision_ipc_track decoder: sending packet failed: %w", err)
+			}
 
-	if err := v.transcoder.encoder.encCodecContext.ReceivePacket(v.stream.encPkt); err != nil {
-		if astiav.ErrEagain.Is(err) {
-			// Encoder might need a few frames on startup to get started. Keep going
-		} else {
-			log.Println(fmt.Errorf("vision_ipc_track encoder: receiving frame failed: %w", err))
-		}
-		return
-	}
+			if err := v.transcoder.decoder.decCodecContext.ReceiveFrame(v.stream.decFrame); err != nil {
+				return v.msgCount, fmt.Errorf("vision_ipc_track decoder: receiving frame failed: %w", err)
+			}
 
-	if err != nil {
-		log.Println(fmt.Errorf("vision_ipc_track: encode error: %w", err))
-		return
-	}
+			if err = v.transcoder.encoder.encCodecContext.SendFrame(v.stream.decFrame); err != nil {
+				return v.msgCount, fmt.Errorf("vision_ipc_track encoder: sending frame failed: %w", err)
+			}
 
-	if err = v.videoTrack.WriteSample(media.Sample{Data: v.stream.encPkt.Data(), Duration: v.duration}); err != nil {
-		log.Println(fmt.Errorf("vision_ipc_track: sample write error: %w", err))
-		return
-	}
+			if err := v.transcoder.encoder.encCodecContext.ReceivePacket(v.stream.encPkt); err != nil {
+				if astiav.ErrEagain.Is(err) {
+					// Encoder might need a few frames on startup to get started. Keep going
+				} else {
+					return v.msgCount, fmt.Errorf("vision_ipc_track encoder: receiving frame failed: %w", err)
+				}
+			}
 
-	v.counter++
+			v.counter++
+			v.pcLatency = ((float64(time.Now().UnixNano()) / 1e6) - float64(v.timeQ[0]))
+			v.timeQ = v.timeQ[1:]
 
-	v.pcLatency = ((float64(time.Now().UnixNano()) / 1e6) - float64(v.timeQ[0]))
-	v.timeQ = v.timeQ[1:]
-}
-
-func (v *VisionIpcTrack) AddTrack(peerConnection *webrtc.PeerConnection) *webrtc.RTPSender {
-	rtpSender, err := peerConnection.AddTrack(v.videoTrack)
-	if err != nil {
-		log.Fatal(fmt.Errorf("main: creating track failed: %w", err))
-	}
-
-	_, err = peerConnection.AddTransceiverFromTrack(v.videoTrack,
-		webrtc.RtpTransceiverInit{
-			Direction: webrtc.RTPTransceiverDirectionSendonly,
-		},
-	)
-	if err != nil {
-		log.Fatal(fmt.Errorf("main: creating transceiver failed: %w", err))
-	}
-
-	// Later on, we will use rtpSender.ReplaceTrack() for graceful track replacement
-
-	// Read incoming RTCP packets
-	// Before these packets are returned they are processed by interceptors. For things
-	// like NACK this needs to be called.
-	go func() {
-		rtcpBuf := make([]byte, 1500)
-		for {
-			if _, _, rtcpErr := rtpSender.Read(rtcpBuf); rtcpErr != nil {
-				return
+			err = v.videoTrack.WriteSample(media.Sample{Data: v.stream.encPkt.Data(), Duration: v.duration})
+			if err != nil {
+				return v.msgCount, fmt.Errorf("vision_ipc_track: sample write error: %w", err)
 			}
 		}
-	}()
-
-	return rtpSender
+	}
+	return v.msgCount, nil
 }
