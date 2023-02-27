@@ -9,6 +9,7 @@ import (
 )
 
 var visionTrack *VisionIpcTrack
+var peerConnection *webrtc.PeerConnection
 
 func main() {
 	signal := signaling.Create("go-webrtc-body")
@@ -20,20 +21,32 @@ func main() {
 		log.Println("Waiting to pair.")
 		<-signal.PairWaitChannel
 	}
+
 	signal.OnPeerConnectionCreated = func(pc *webrtc.PeerConnection) {
-		ReplaceTrack("road", pc)
+		peerConnection = pc
+		InitStream(pc)
+	}
+	signal.OnMessage = func(msg signaling.Message) {
+		switch msg.PayloadType {
+		case "request_track":
+			{
+				visionTrack.ChangeCamera()
+			}
+		default:
+			log.Printf("unimplemented message type: %s\n", msg.PayloadType)
+		}
 	}
 	for {
 		select {}
 	}
 }
 
-func ReplaceTrack(prefix string, peerConnection *webrtc.PeerConnection) {
+func InitStream(peerConnection *webrtc.PeerConnection) {
 	var err error
 	if visionTrack != nil {
 		visionTrack.Stop()
 	}
-	visionTrack, err = NewVisionIpcTrack(prefix + "EncodeData")
+	visionTrack, err = NewVisionIpcTrack()
 	if err != nil {
 		log.Fatal(fmt.Errorf("main: creating track failed: %w", err))
 	}
